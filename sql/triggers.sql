@@ -1,0 +1,4 @@
+-- No database trigger is required for the current foundation.
+-- Available-item lookup is handled by dbo.GetAvailableItemsByCategory.
+-- Audit logging will primarily be handled by the Flask application so that
+-- each log entry can include the authenticated user and request context.
