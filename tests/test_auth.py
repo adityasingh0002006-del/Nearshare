@@ -1,4 +1,4 @@
-from nearshare import create_app
+from config import create_app
 from werkzeug.security import check_password_hash
 
 

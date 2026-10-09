@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template
+from werkzeug.exceptions import RequestEntityTooLarge
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -38,8 +39,17 @@ def create_app(test_config=None):
 
     from routes.auth import auth_bp
     from routes.admin import admin_bp
+    from routes.items import items_bp
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
+    app.register_blueprint(items_bp, url_prefix="/api/items")
+    app.config["MAX_CONTENT_LENGTH"] = (test_config or {}).get(
+        "MAX_CONTENT_LENGTH", 5 * 1024 * 1024 + 64 * 1024
+    )
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def request_too_large(_error):
+        return jsonify(error="Request exceeds the 5 MB image upload limit"), 413
 
     @app.get("/")
     def index():

@@ -12,7 +12,7 @@
 - Analytics: Power BI
 - Version control: Git and GitHub
 
-The application serves a welcome page and API health check, plus session-based authentication and role checks. The Azure SQL foundation includes the approved schema, available-items view and procedure, and development seed data. Booking workflows and Azure Blob integration remain future work.
+The application serves a welcome page and API health check, plus session-based authentication, role checks, authenticated item CRUD, and item image uploads to Azure Blob Storage. The Azure SQL foundation includes the approved schema, available-items view and procedure, and development seed data. Booking workflows remain future work.
 
 ## Run locally
 
@@ -55,7 +55,7 @@ Set these values in the local `.env` file:
 | `DB_PASSWORD` | SQL login password |
 | `DB_DRIVER` | ODBC driver name; defaults to `ODBC Driver 18 for SQL Server` |
 
-`FLASK_ENV` and `SECRET_KEY` configure Flask. Set `SECRET_KEY` to a long random value before starting the app; the application refuses to start without one outside tests. Azure Blob placeholders are retained for a later storage phase and are not used by this database foundation.
+`FLASK_ENV` and `SECRET_KEY` configure Flask. Set `SECRET_KEY` to a long random value before starting the app; the application refuses to start without one outside tests. Set `AZURE_STORAGE_CONNECTION_STRING` for image uploads; `AZURE_STORAGE_CONTAINER` is optional and defaults to `nearshare-images`. Storage credentials are read from the environment and must never be committed. The configured container is created on first use. Uploads accept JPEG, PNG, and WebP up to 5 MB, with extension, MIME type, and file signature validation. Generated blob names are stored in `dbo.ItemImages`.
 
 ## Authentication API
 
@@ -64,6 +64,17 @@ Set these values in the local `.env` file:
 - `POST /api/auth/logout` ends the session.
 - `GET /api/auth/me` returns the signed-in user's public profile and requires authentication.
 - `GET /api/admin/me` demonstrates admin-only access. `login_required`, `roles_required`, and `admin_required` are available in `middleware.auth` for protected API handlers.
+
+## Items API
+
+All item endpoints require the signed-in session:
+
+- `GET /api/items` lists items; `GET /api/items/<item_id>` returns one item with its category and image URLs.
+- `POST /api/items` creates an item using `category_id`, `item_name`, `condition`, `rental_price`, `security_deposit`, and `is_available`; `description` is optional. The authenticated user is always the owner.
+- `PUT` or `PATCH /api/items/<item_id>` updates supplied fields. `DELETE /api/items/<item_id>` removes the item and associated image records. Both operations are restricted to the owner; a database relationship that prevents deletion returns a conflict.
+- `POST /api/items/<item_id>/images` accepts multipart form data with an `image` file field. Only the item owner can add an image.
+
+Conditions are `NEW`, `LIKE_NEW`, `GOOD`, `FAIR`, and `POOR`. Category IDs must refer to an existing category. Rental prices and deposits must be non-negative with at most two decimal places, and availability must be a JSON boolean. Blob URLs are persisted in the existing `dbo.ItemImages` table; no schema change is required.
 
 Passwords are stored using Werkzeug's salted scrypt password hash. Login success/failure and logout are recorded in the existing `dbo.AuditLogs` table. Configure HTTPS in production; session cookies are marked secure outside development mode.
 
