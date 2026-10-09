@@ -2,15 +2,37 @@
 
 from functools import wraps
 
-from flask import jsonify, session
+from flask import current_app, jsonify, session
+
+from database.connection import get_connection
 
 
 def login_required(view):
     """Require a valid user identity stored in the signed Flask session."""
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if not session.get("user_id"):
+        user_id = session.get("user_id")
+        if not user_id:
             return jsonify(error="Authentication required"), 401
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT is_active FROM dbo.Users WHERE user_id = ?",
+                user_id,
+            )
+            row = cursor.fetchone()
+        except Exception:
+            current_app.logger.exception("Authenticated account status check failed")
+            return jsonify(error="Authentication service unavailable"), 503
+        finally:
+            if conn:
+                conn.close()
+
+        if not row or not row[0]:
+            session.clear()
+            return jsonify(error="Account is inactive"), 403
         return view(*args, **kwargs)
     return wrapped
 
