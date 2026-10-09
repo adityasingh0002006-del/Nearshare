@@ -1,14 +1,28 @@
 <!doctype html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>NearShare</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111111">
+  <meta name="description" content="Find what you need nearby, borrow from people around you, and share what you own.">
+  <title>NearShare — Why Buy When You Can Borrow?</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script defer src="{{ url_for('static', filename='js/api.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/app.js') }}"></script>
 </head>
 <body>
-    <main>
-        <h1>Welcome to NearShare</h1>
-        <p>Why Buy When You Can Borrow?</p>
-    </main>
+  <header class="topbar">
+    <a class="brand" href="#home" aria-label="NearShare home"><span class="brand-mark" aria-hidden="true">n</span><span>near<span class="brand-accent">share</span><small>Why Buy When You Can Borrow?</small></span></a>
+    <button class="menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+    <nav class="nav-links" aria-label="Main navigation" id="site-nav"></nav>
+    <div class="nav-actions" id="nav-actions"></div>
+  </header>
+  <main id="app" tabindex="-1"><div class="page-loader" role="status">Loading NearShare…</div></main>
+  <footer class="site-footer"><div class="footer-inner"><a class="brand brand-footer" href="#home"><span class="brand-mark" aria-hidden="true">n</span><span>near<span class="brand-accent">share</span><small>Why Buy When You Can Borrow?</small></span></a><p>Good things travel further when we share them.</p><span>© <span id="year"></span> NearShare</span></div></footer>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <dialog id="confirm-dialog" class="confirm-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button><p class="eyebrow">NEARSHARE</p><h2 id="dialog-title">Are you sure?</h2><p id="dialog-copy"></p><div class="dialog-actions"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-primary" id="dialog-confirm" value="confirm">Confirm</button></div></form></dialog>
 </body>
 </html>

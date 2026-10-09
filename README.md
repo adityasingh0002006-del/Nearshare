@@ -1,18 +1,28 @@
 # NearShare
 
-**Why Buy When You Can Borrow?** NearShare is a hyperlocal platform concept for borrowing and lending useful items in your community.
+**Why Buy When You Can Borrow?** NearShare is a hyperlocal borrowing and lending platform. Neighbours can share useful items, post requests, find locality-based matches, make offers, coordinate bookings and review completed borrows.
 
-## Technology stack
+## Architecture
 
-- Frontend: HTML, CSS, and vanilla JavaScript
-- Backend: Python Flask REST API
-- Database: Azure SQL Database / SQL Server with T-SQL
-- File storage: Azure Blob Storage
-- Hosting: Azure App Service
-- Analytics: Power BI
-- Version control: Git and GitHub
+- **Frontend:** Flask/Jinja template, responsive CSS and vanilla JavaScript (`static/`). The browser calls the existing REST endpoints through a small shared Fetch helper.
+- **Backend:** Flask application factory in `config.py`; JSON APIs are registered from `routes/`. Authentication uses Flask's signed, HTTP-only session cookie. API authorization remains on the server.
+- **Database:** Azure SQL / SQL Server through `pyodbc`, using the existing objects in `sql/` and connection settings from environment variables.
+- **Images:** Azure Blob Storage through the existing image upload API. Blob URLs are kept in the `ItemImages` table; image bytes are not stored in SQL.
+- **Analytics:** Power BI is an intended integration. No embed URL/API is configured in this repository.
 
-The application serves a welcome page and API health check, plus session-based authentication, role checks, authenticated item CRUD, and item image uploads to Azure Blob Storage. The Azure SQL foundation includes the approved schema, available-items view and procedure, and development seed data. Booking workflows remain future work.
+## Current features
+
+- Public NearShare landing page and responsive navigation.
+- Registration, login, logout and current-session lookup.
+- Browse/search items, view details, create/edit/delete owned items and upload JPEG, PNG or WebP images.
+- Create requests, see open requests, view hyperlocal matches and make offers on matching items.
+- View offers, accept/reject request offers, withdraw own pending offers and create bookings through acceptance.
+- View bookings, confirm handover, return and completion, and submit/list participant reviews.
+- Notification inbox, unread count and mark-as-read action.
+- Admin summary, paged user list and account activation/deactivation.
+- Loading, empty, error and success feedback; responsive layouts and keyboard-accessible form controls.
+
+The existing backend does **not** expose `GET /api/categories`, `GET /api/localities`, profile update/deactivation endpoints (there is no registered `/api/users` blueprint), item-owner names/contact details, admin item moderation, an admin booking list, an audit-log list, or a Power BI embed endpoint. The frontend does not invent these APIs. Category and locality IDs must currently be entered using values configured in the database. `/api/auth/me` returns `user_id`, `full_name`, `email`, and `role` only; it does not return phone, locality, account status or member-since data. The booking list/detail serializer also omits `borrower_id` and `owner_id`, so the frontend cannot identify the participant permitted to take a booking transition. The admin summary does not include item totals or completed-booking totals. Item API image arrays contain the canonical Blob URLs, but there is no signed-URL or authenticated image-proxy endpoint for viewing images from a private container. No item-list query filters are implemented by the API.
 
 ## Run locally
 
@@ -23,86 +33,58 @@ The application serves a welcome page and API health check, plus session-based a
    .\.venv\Scripts\Activate.ps1
    ```
 
-2. Install the Python requirements:
+2. Install dependencies and the Microsoft ODBC Driver 18 for SQL Server:
 
    ```powershell
    py -m pip install -r requirements.txt
    ```
 
-3. Install **Microsoft ODBC Driver 18 for SQL Server** on the computer running the app. The `pyodbc` Python package requires this separate system driver.
+3. Copy `.env.example` to `.env` and configure the required values. Keep `.env` private:
 
-4. Copy `.env.example` to `.env` and fill in the Azure SQL settings below. Keep `.env` private and never commit it. The application can still serve its welcome and health routes without Azure SQL credentials.
+   ```powershell
+   Copy-Item .env.example .env
+   ```
 
-5. Start Flask:
+   Set `SECRET_KEY` to a long random value. Database-backed pages require `DB_SERVER`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD`. `DB_DRIVER` defaults to `ODBC Driver 18 for SQL Server`. Image uploads require `AZURE_STORAGE_CONNECTION_STRING`; `AZURE_STORAGE_CONTAINER` is optional and defaults to `nearshare-images`.
+
+4. Create database objects in Azure SQL, in this order, if setting up a new database: `sql/schema.sql`, `sql/views.sql`, `sql/procedures.sql`, and (for development data) `sql/seed.sql`. `sql/triggers.sql` is documentation and creates no trigger.
+
+5. Start the Flask app:
 
    ```powershell
    py app.py
    ```
 
-   Open `http://127.0.0.1:5000/` to see the welcome page.
+   Visit `http://127.0.0.1:5000/`. The API health check is `http://127.0.0.1:5000/api/health`.
 
-## Azure SQL prerequisites and environment
+## Existing API surface
 
-Create an Azure SQL logical server and database, configure a firewall rule for the development machine's public IP, and prepare a SQL login with permission to create and use the schema. Install ODBC Driver 18 on any machine that will connect through `pyodbc`.
+Routes are defined in the Flask blueprints; all endpoints are under `/api` unless noted.
 
-Set these values in the local `.env` file:
-
-| Variable | Purpose |
+| Area | Endpoints |
 | --- | --- |
-| `DB_SERVER` | Azure SQL server host name, such as `your-server.database.windows.net` |
-| `DB_NAME` | Database name |
-| `DB_USER` | SQL login name |
-| `DB_PASSWORD` | SQL login password |
-| `DB_DRIVER` | ODBC driver name; defaults to `ODBC Driver 18 for SQL Server` |
+| Health | `GET /api/health` |
+| Auth | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` |
+| Admin | `GET /api/admin/me`, `GET /api/admin/users`, `PATCH /api/admin/users/<user_id>/status`, `GET /api/admin/summary` |
+| Items | `GET, POST /api/items`, `GET, PUT, PATCH, DELETE /api/items/<item_id>`, `POST /api/items/<item_id>/images` |
+| Requests | `GET, POST /api/requests`, `GET /api/requests/<request_id>`, `PATCH /api/requests/<request_id>`, `GET /api/requests/<request_id>/matches`, `POST /api/requests/<request_id>/cancel` |
+| Offers | `POST /api/requests/<request_id>/offers`, `GET /api/offers`, `GET /api/requests/<request_id>/offers`, `GET /api/offers/<offer_id>`, `POST /api/offers/<offer_id>/withdraw`, `POST /api/offers/<offer_id>/accept`, `POST /api/offers/<offer_id>/reject` |
+| Bookings | `GET /api/bookings`, `GET /api/bookings/<booking_id>`, `POST /api/bookings/<booking_id>/handover`, `/return`, `/complete` |
+| Reviews | `POST, GET /api/reviews/bookings/<booking_id>/reviews`, `GET /api/reviews/<review_id>` |
+| Notifications | `GET /api/notifications`, `GET /api/notifications/unread-count`, `PATCH /api/notifications/<notification_id>/read` |
 
-`FLASK_ENV` and `SECRET_KEY` configure Flask. Set `SECRET_KEY` to a long random value before starting the app; the application refuses to start without one outside tests. Set `AZURE_STORAGE_CONNECTION_STRING` for image uploads; `AZURE_STORAGE_CONTAINER` is optional and defaults to `nearshare-images`. Storage credentials are read from the environment and must never be committed. The configured container is created on first use. Uploads accept JPEG, PNG, and WebP up to 5 MB, with extension, MIME type, and file signature validation. Generated blob names are stored in `dbo.ItemImages`.
+The browser sends same-origin requests with the session cookie. Item uploads send multipart form data with the `image` field. Request/offer/booking state changes, ownership and roles are validated by the backend and database workflow.
 
-## Authentication API
+## Tests
 
-- `POST /api/auth/register` accepts `full_name`, `email`, `phone`, `password` (at least 12 characters), and `locality_id`. Registration always creates a `USER`; role assignment is never accepted from the request.
-- `POST /api/auth/login` accepts `email` and `password` and starts a signed, HTTP-only Flask session.
-- `POST /api/auth/logout` ends the session.
-- `GET /api/auth/me` returns the signed-in user's public profile and requires authentication.
-- `GET /api/admin/me` demonstrates admin-only access. `login_required`, `roles_required`, and `admin_required` are available in `middleware.auth` for protected API handlers.
+Run the existing backend suite with:
 
-## Items API
-
-All item endpoints require the signed-in session:
-
-- `GET /api/items` lists items; `GET /api/items/<item_id>` returns one item with its category and image URLs.
-- `POST /api/items` creates an item using `category_id`, `item_name`, `condition`, `rental_price`, `security_deposit`, and `is_available`; `description` is optional. The authenticated user is always the owner.
-- `PUT` or `PATCH /api/items/<item_id>` updates supplied fields. `DELETE /api/items/<item_id>` removes the item and associated image records. Both operations are restricted to the owner; a database relationship that prevents deletion returns a conflict.
-- `POST /api/items/<item_id>/images` accepts multipart form data with an `image` file field. Only the item owner can add an image.
-
-Conditions are `NEW`, `LIKE_NEW`, `GOOD`, `FAIR`, and `POOR`. Category IDs must refer to an existing category. Rental prices and deposits must be non-negative with at most two decimal places, and availability must be a JSON boolean. Blob URLs are persisted in the existing `dbo.ItemImages` table; no schema change is required.
-
-Passwords are stored using Werkzeug's salted scrypt password hash. Login success/failure and logout are recorded in the existing `dbo.AuditLogs` table. Configure HTTPS in production; session cookies are marked secure outside development mode.
-
-## Create the database objects
-
-Connect to the target Azure SQL database using SQL Server Management Studio (SSMS) or Azure Data Studio. Run the scripts in this order, in the same database:
-
-1. `sql/schema.sql` creates the 11 approved tables, constraints, and indexes. Run it once on a new database.
-2. `sql/views.sql` creates `dbo.AvailableItemsView`.
-3. `sql/procedures.sql` creates `dbo.GetAvailableItemsByCategory`.
-4. `sql/seed.sql` inserts repeatable development localities, categories, users, items, and requests.
-
-`sql/triggers.sql` documents why no trigger is needed in this phase; it does not create a database object. The seed users contain non-authenticatable development placeholders in `password_hash`, not working passwords.
-
-The procedure can be called in SSMS with a category ID, for example:
-
-```sql
-EXEC dbo.GetAvailableItemsByCategory @CategoryId = 1;
+```powershell
+py -m pytest
 ```
 
-The Flask connection helper reads the same `DB_*` variables from the environment. It uses encryption and certificate validation with ODBC Driver 18 and never embeds credentials in source code.
+The tests use the fixtures and mocks in `tests/`; a fully working local end-to-end flow also requires the configured Azure SQL database, ODBC driver and Blob Storage settings.
 
-## API health check
+## Deployment and security
 
-`GET http://127.0.0.1:5000/api/health` returns JSON while the API is running, for example:
-
-```json
-{"message":"NearShare API is running","status":"ok"}
-```
-
-Never commit `.env` or real credentials. `.env.example` contains placeholders only.
+Deploy the Flask application to the configured hosting platform (the project targets Azure App Service), supply production secrets through environment configuration, use HTTPS, and configure Azure SQL firewall/network access and Blob Storage. Outside development mode the Flask session cookie is marked secure. Never commit `.env`, database credentials, storage connection strings or production secrets. Keep authorization and validation in the backend; the UI only reflects the available workflow and is not an access-control boundary.
