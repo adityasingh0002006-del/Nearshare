@@ -12,7 +12,7 @@
 - Analytics: Power BI
 - Version control: Git and GitHub
 
-The current application serves a welcome page and API health check. Phase 2 adds the Azure SQL schema, a read-only available-items view and procedure, and safe development seed data. Authentication, booking workflows, and Azure Blob integration are future work.
+The application serves a welcome page and API health check, plus session-based authentication and role checks. The Azure SQL foundation includes the approved schema, available-items view and procedure, and development seed data. Booking workflows and Azure Blob integration remain future work.
 
 ## Run locally
 
@@ -55,7 +55,17 @@ Set these values in the local `.env` file:
 | `DB_PASSWORD` | SQL login password |
 | `DB_DRIVER` | ODBC driver name; defaults to `ODBC Driver 18 for SQL Server` |
 
-`FLASK_ENV` and `SECRET_KEY` configure Flask. Azure Blob placeholders are retained for a later storage phase and are not used by this database foundation.
+`FLASK_ENV` and `SECRET_KEY` configure Flask. Set `SECRET_KEY` to a long random value before starting the app; the application refuses to start without one outside tests. Azure Blob placeholders are retained for a later storage phase and are not used by this database foundation.
+
+## Authentication API
+
+- `POST /api/auth/register` accepts `full_name`, `email`, `phone`, `password` (at least 12 characters), and `locality_id`. Registration always creates a `USER`; role assignment is never accepted from the request.
+- `POST /api/auth/login` accepts `email` and `password` and starts a signed, HTTP-only Flask session.
+- `POST /api/auth/logout` ends the session.
+- `GET /api/auth/me` returns the signed-in user's public profile and requires authentication.
+- `GET /api/admin/me` demonstrates admin-only access. `login_required`, `roles_required`, and `admin_required` are available in `middleware.auth` for protected API handlers.
+
+Passwords are stored using Werkzeug's salted scrypt password hash. Login success/failure and logout are recorded in the existing `dbo.AuditLogs` table. Configure HTTPS in production; session cookies are marked secure outside development mode.
 
 ## Create the database objects
 

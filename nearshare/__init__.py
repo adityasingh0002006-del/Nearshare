@@ -1,17 +1,31 @@
 import os
+import secrets
+from datetime import timedelta
 from flask import Flask, jsonify
 from dotenv import load_dotenv
 
 
 def create_app(test_config=None):
     load_dotenv()
+    secret_key = os.getenv("SECRET_KEY")
+    if not secret_key and not (test_config and test_config.get("TESTING")):
+        raise RuntimeError("Set SECRET_KEY to a long, random value in the environment")
     app = Flask(__name__)
     app.config.from_mapping(
-        SECRET_KEY=os.getenv("SECRET_KEY", "local-development-only-change-me"),
+        SECRET_KEY=secret_key or secrets.token_urlsafe(32),
         DEBUG=os.getenv("FLASK_ENV") == "development",
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=os.getenv("FLASK_ENV", "development") != "development",
+        PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
     )
     if test_config:
         app.config.update(test_config)
+
+    from routes.auth import auth_bp
+    from routes.admin import admin_bp
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
+    app.register_blueprint(admin_bp, url_prefix="/api/admin")
 
     from nearshare.routes.health import health_bp
     app.register_blueprint(health_bp, url_prefix="/api")

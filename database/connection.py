@@ -1,6 +1,10 @@
 """Small Azure SQL connection helper using environment configuration only."""
 
 import os
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 
 def _odbc_value(value):
@@ -28,7 +32,7 @@ def get_connection_string():
             f"PWD={_odbc_value(os.environ['DB_PASSWORD'])}",
             "Encrypt=yes",
             "TrustServerCertificate=no",
-            "Connection Timeout=30",
+            "Connection Timeout=60",
         )
     )
 
