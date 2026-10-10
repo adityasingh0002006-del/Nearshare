@@ -5,12 +5,13 @@ import logging
 import re
 import uuid
 
-from flask import Blueprint, current_app, jsonify, request, session
+from flask import Blueprint, Response, current_app, jsonify, request, session
+from azure.core.exceptions import ResourceNotFoundError
 from PIL import Image, UnidentifiedImageError
 
 from database.connection import get_connection
 from middleware.auth import login_required
-from services.storage_service import delete_image, upload_image
+from services.storage_service import delete_image, download_image, upload_image
 
 
 items_bp = Blueprint("items", __name__)
@@ -47,7 +48,7 @@ def _item_select(where="", suffix=""):
                       i.item_name, i.description, i.item_condition,
                       i.rental_price, i.security_deposit, i.is_available,
                       i.created_at, i.updated_at,
-                      COALESCE((SELECT STRING_AGG(CAST(ii.blob_url AS NVARCHAR(MAX)), N'|')
+                      COALESCE((SELECT STRING_AGG(CAST(N'/api/items/images/' + CONVERT(NVARCHAR(20), ii.image_id) AS NVARCHAR(MAX)), N'|')
                                 FROM dbo.ItemImages AS ii WHERE ii.item_id = i.item_id), N'')
                FROM dbo.Items AS i
                INNER JOIN dbo.Categories AS c ON c.category_id = i.category_id
@@ -314,9 +315,10 @@ def add_item_image(item_id):
         except Exception:
             current_app.logger.exception("Item image storage operation failed")
             return jsonify(error="Image storage unavailable"), 503
-        cursor.execute("INSERT INTO dbo.ItemImages (item_id, blob_url) VALUES (?, ?)", item_id, blob_url)
+        cursor.execute("INSERT INTO dbo.ItemImages (item_id, blob_url) OUTPUT INSERTED.image_id VALUES (?, ?)", item_id, blob_url)
+        image_id = cursor.fetchone()[0]
         conn.commit()
-        return jsonify(image={"blob_url": blob_url}), 201
+        return jsonify(image={"blob_url": f"/api/items/images/{image_id}"}), 201
     except Exception:
         if conn:
             conn.rollback()
@@ -326,6 +328,32 @@ def add_item_image(item_id):
             except Exception:
                 logging.getLogger(__name__).exception("Could not clean up unassociated item image")
         return _db_error()
+    finally:
+        if conn:
+            conn.close()
+
+
+@items_bp.get("/images/<int:image_id>")
+@login_required
+def get_item_image(image_id):
+    """Serve a database-associated image from the configured private blob container."""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT blob_url FROM dbo.ItemImages WHERE image_id = ?", image_id)
+        row = cursor.fetchone()
+        if not row:
+            return jsonify(error="Image not found"), 404
+        image_bytes, content_type = download_image(row[0])
+        response = Response(image_bytes, mimetype=content_type)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    except (FileNotFoundError, ResourceNotFoundError):
+        return jsonify(error="Image not found"), 404
+    except Exception:
+        current_app.logger.exception("Item image retrieval failed")
+        return jsonify(error="Image service unavailable"), 503
     finally:
         if conn:
             conn.close()

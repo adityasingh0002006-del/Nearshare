@@ -16,6 +16,10 @@ class Cursor:
         self.executed.append((query, params))
         if "SELECT owner_id FROM dbo.Items" in query:
             self.result = (self.owner_id,)
+        elif "INSERT INTO dbo.ItemImages" in query:
+            self.result = (123,)
+        elif "SELECT blob_url FROM dbo.ItemImages WHERE image_id" in query:
+            self.result = ("https://storage.example/nearshare-images/items/5/photo.jpg",)
         else:
             self.result = None
         return self
@@ -127,7 +131,7 @@ def test_image_upload_accepts_supported_image_bytes_with_matching_mime(
     assert uploaded["data"]
     assert uploaded["blob_name"].startswith("items/8/")
     assert uploaded["blob_name"].endswith(f".{extension}")
-    assert response.json["image"]["blob_url"].endswith(uploaded["blob_name"])
+    assert response.json["image"]["blob_url"] == "/api/items/images/123"
     assert any("INSERT INTO dbo.ItemImages" in query
                for query, _ in connection.fake_cursor.executed)
 
@@ -178,3 +182,68 @@ def test_image_upload_rejects_mismatched_mime_type(monkeypatch):
 
     assert response.status_code == 400
     assert "matching" in response.json["error"]
+
+
+def test_item_image_serialization_uses_authenticated_flask_endpoint():
+    from routes.items import _serialize
+
+    row = (5, 2, 1, "Tools", "Drill", "", "GOOD", 10, 0, True,
+           None, None, "/api/items/images/42|/api/items/images/43")
+    assert _serialize(row)["images"] == ["/api/items/images/42", "/api/items/images/43"]
+
+
+def test_private_item_image_endpoint_requires_authenticated_user():
+    client = create_app({"TESTING": True}).test_client()
+    response = client.get("/api/items/images/42")
+    assert response.status_code == 401
+
+
+def test_private_item_image_endpoint_returns_bytes_type_and_no_store(monkeypatch):
+    connection = Connection()
+    monkeypatch.setattr("routes.items.get_connection", lambda: connection)
+    monkeypatch.setattr("routes.items.download_image", lambda url: (b"fake-image", "image/webp"))
+    client = signed_in_client()
+
+    response = client.get("/api/items/images/42")
+
+    assert response.status_code == 200
+    assert response.data == b"fake-image"
+    assert response.content_type == "image/webp"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert any("WHERE image_id = ?" in query and params == (42,)
+               for query, params in connection.fake_cursor.executed)
+
+
+def test_private_item_image_endpoint_returns_404_when_record_missing(monkeypatch):
+    class MissingCursor:
+        def execute(self, *_args):
+            return self
+        def fetchone(self):
+            return None
+
+    class MissingConnection:
+        def cursor(self):
+            return MissingCursor()
+        def close(self):
+            pass
+
+    monkeypatch.setattr("routes.items.get_connection", MissingConnection)
+    monkeypatch.setattr("routes.items.download_image", lambda *_args: (_ for _ in ()).throw(AssertionError("No blob lookup for missing record")))
+    response = signed_in_client().get("/api/items/images/999")
+    assert response.status_code == 404
+
+
+def test_download_image_rejects_unassociated_blob_paths():
+    from services.storage_service import _blob_name_for_url
+
+    class Container:
+        url = "https://storage.example/nearshare-images"
+
+    for url in (
+        "https://attacker.example/nearshare-images/items/1/x.png",
+        "https://storage.example/other/items/1/x.png",
+        "https://storage.example/nearshare-images/items/../secret",
+        "https://storage.example/nearshare-images/items/%2e%2e/secret",
+    ):
+        with pytest.raises(ValueError):
+            _blob_name_for_url(Container(), url)
