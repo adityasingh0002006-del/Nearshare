@@ -48,6 +48,33 @@ def test_request_form_uses_lookup_labels_validates_selections_and_submits_numeri
     assert "Enter the locality ID configured for your area." not in source
 
 
+def test_city_lookup_string_response_drives_city_filtered_locality_dropdown():
+    source = APP_JS.read_text(encoding="utf-8")
+    helper = source.split("async function setupCityLocality", 1)[1].split("function empty(", 1)[0]
+
+    # /api/cities returns strings, so city option values and membership checks
+    # must both use each string directly rather than object properties.
+    assert "const result=await API.get('/api/cities')" in helper
+    assert "rows.map(name=>new Option(name,name))" in helper
+    assert "cityIds=new Set(rows)" in helper
+    assert "city.onchange=()=>{localityIds=null;loadLocalities();}" in helper
+
+    # Each selection clears and disables the previous locality options while
+    # fetching, then uses only the selected city's API response.
+    assert "locality.replaceChildren(new Option('Loading…',''))" in helper
+    assert "locality.disabled=true" in helper
+    assert "'/api/localities?city='+encodeURIComponent(selected)" in helper
+    assert "const rows=result.localities||[]" in helper
+    assert "locality.replaceChildren(new Option('Select locality','',true,true),...rows.map(row=>new Option(row.locality_name,String(row.locality_id))))" in helper
+    assert "localityIds=new Set(rows.map(row=>Number(row.locality_id)))" in helper
+
+
+def test_request_list_uses_city_filtered_locality_lookups():
+    source = APP_JS.read_text(encoding="utf-8")
+    assert "API.get('/api/localities')" not in source
+    assert "cityData.cities||[]).map(city=>API.get('/api/localities?city='+encodeURIComponent(city)))" in source
+
+
 def test_item_borrow_action_uses_a_server_resolved_matching_request():
     source = APP_JS.read_text(encoding="utf-8")
 

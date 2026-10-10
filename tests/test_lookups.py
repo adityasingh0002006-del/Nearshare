@@ -71,6 +71,7 @@ def test_kanpur_localities_load_correctly(monkeypatch):
     response = create_app({"TESTING": True}).test_client().get("/api/localities?city=Kanpur")
     assert response.status_code == 200
     assert [row["locality_name"] for row in response.json["localities"]] == KANPUR
+    assert len(response.json["localities"]) == 10
     assert all(row["city"] == "Kanpur" for row in response.json["localities"])
     assert connection.fake_cursor.params == ("Kanpur",)
 
@@ -80,6 +81,7 @@ def test_lucknow_localities_load_correctly(monkeypatch):
     response = create_app({"TESTING": True}).test_client().get("/api/localities?city=Lucknow")
     assert response.status_code == 200
     assert [row["locality_name"] for row in response.json["localities"]] == LUCKNOW
+    assert len(response.json["localities"]) == 10
     assert all(row["city"] == "Lucknow" for row in response.json["localities"])
 
 
