@@ -133,8 +133,10 @@ def test_contact_details_are_loaded_from_participant_scoped_booking_endpoint():
     source = APP_JS.read_text(encoding="utf-8")
 
     assert "contactAvailable=states.includes(b.status)" in source
+    assert ">View Contact Details</button>" in source
+    assert "Booking confirmed" in source
     assert "data-contacts=\"${b.booking_id}\"" in source
     assert "API.get(`/api/bookings/${id}/contacts`)" in source
     assert "esc(contacts.borrower.email)" in source
     assert "esc(contacts.owner.email)" in source
-    assert "Shared with booking participants after offer acceptance." in source
+    assert "Contact details are shared only with the borrower and item owner for this confirmed booking." in source

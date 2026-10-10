@@ -226,7 +226,12 @@ def accept_offer(cursor, offer_id, actor_id, ip_address=None):
     )
     _notify(
         cursor, request_row[0], request_id,
-        f"Your offer {offer_id} was accepted and the booking is confirmed.",
+        "Booking confirmed. You can now contact the item owner.",
+        "BOOKING_CONFIRMED",
+    )
+    _notify(
+        cursor, accepted_offer[3], request_id,
+        "Booking confirmed. You can now contact the borrower.",
         "BOOKING_CONFIRMED",
     )
     _audit(cursor, actor_id, "OFFER_ACCEPTED", offer_id, ip_address)
