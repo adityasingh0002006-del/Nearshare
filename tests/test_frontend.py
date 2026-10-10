@@ -26,6 +26,12 @@ def test_request_form_uses_lookup_labels_validates_selections_and_submits_numeri
     assert "setupCityLocality(city,locality" in source
     assert "'/api/cities'" in source
     assert "'/api/localities?city='+encodeURIComponent(selected)" in source
+    assert "Retry city lookup" not in source
+    assert "Retry locality lookup" not in source
+    assert "city-retry" not in source
+    assert "locality-retry" not in source
+    assert "Could not load '+noun.toLowerCase()+'. Please try again.'" in source
+    assert "Could not load localities. Please try again." in source
     assert "delete data.city" in source
     assert "Loading categories…" in source
     assert "Loading '+noun.toLowerCase()+'…'" in source
