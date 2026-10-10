@@ -22,8 +22,10 @@ class NotificationCursor:
         self.database = database
         self.result = None
         self.results = []
+        self.executed = []
 
     def execute(self, query, *params):
+        self.executed.append((query, params))
         self.result = None
         self.results = []
         if "SELECT notification_id" in query and "WITH (UPDLOCK, HOLDLOCK)" in query:
@@ -32,7 +34,7 @@ class NotificationCursor:
                         if n[1:5] == (user_id, request_id, message, notification_type)), None)
             self.result = (row[0],) if row else None
         elif "INSERT INTO dbo.Notifications" in query and "SELECT DISTINCT i.owner_id" in query:
-            message, notification_type, request_id, check_type, check_message = params
+            message, notification_type, request_id, check_type = params
             owners = {
                 item["owner_id"] for item in self.database["items"]
                 if item["request_id"] == request_id and item["matches"]
@@ -40,7 +42,7 @@ class NotificationCursor:
             for owner_id in owners:
                 already = any(
                     row[1] == owner_id and row[2] == request_id
-                    and row[3] == check_type and row[4] == check_message
+                    and row[4] == check_type
                     for row in self.database["notifications"]
                 )
                 if not already:
@@ -183,11 +185,22 @@ def test_new_request_notifies_distinct_matching_item_owners_once():
     cursor = NotificationCursor(database)
 
     notify_matching_item_owners(cursor, 5)
+    notify_matching_item_owners(cursor, 5)
 
     assert len(database["notifications"]) == 1
     assert database["notifications"][0][1:5] == (
-        20, 5, "A new request matches one of your available items.", "REQUEST_CREATED",
+        20, 5, "New request matching your item.", "MATCHING_REQUEST",
     )
+    query = cursor.executed[0][0]
+    assert "SELECT DISTINCT i.owner_id, r.request_id" in query
+    assert "request_locality.city = item_locality.city" in query
+    assert "item_locality.locality_id = r.locality_id" in query
+    assert "i.category_id = r.category_id" in query
+    assert "i.rental_price <= r.max_budget" in query
+    assert "b.start_datetime < r.end_datetime" in query
+    assert "b.end_datetime > r.start_datetime" in query
+    assert "n.user_id = i.owner_id AND n.request_id = r.request_id" in query
+    assert "n.notification_type = ?" in query
 
 
 def test_offer_creation_notifies_request_owner_in_same_transaction(monkeypatch):

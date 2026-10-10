@@ -8,7 +8,11 @@ from flask import Blueprint, current_app, jsonify, request, session
 
 from database.connection import get_connection
 from middleware.auth import login_required
-from services.matching_service import find_matches
+from services.matching_service import (
+    find_matching_request_for_borrower_item,
+    find_matches,
+    find_nearby_requests,
+)
 from services.notification_service import (
     notify_matching_item_owners,
     notify_request_offer_owners,
@@ -222,39 +226,26 @@ def find_matching_request_for_item(item_id):
         if item[0] == session["user_id"]:
             return jsonify(request_id=None, owns_item=True), 200
 
-        cursor.execute(
-            """SELECT TOP (1) r.request_id
-               FROM dbo.Items AS i
-               INNER JOIN dbo.Users AS item_owner
-                   ON item_owner.user_id = i.owner_id
-               INNER JOIN dbo.Localities AS owner_locality
-                   ON owner_locality.locality_id = item_owner.locality_id
-               INNER JOIN dbo.Requests AS r
-                   ON r.category_id = i.category_id
-                  AND r.locality_id = owner_locality.locality_id
-               INNER JOIN dbo.Localities AS request_locality
-                   ON request_locality.locality_id = r.locality_id
-                  AND request_locality.city = owner_locality.city
-               WHERE i.item_id = ?
-                 AND r.requester_id = ?
-                 AND r.requester_id <> i.owner_id
-                 AND r.status IN (N'OPEN', N'MATCHED')
-                 AND i.is_available = 1
-                 AND item_owner.is_active = 1
-                 AND i.rental_price <= r.max_budget
-                 AND NOT EXISTS
-                     (SELECT 1
-                      FROM dbo.Bookings AS b
-                      INNER JOIN dbo.Offers AS o ON o.offer_id = b.offer_id
-                      WHERE o.item_id = i.item_id
-                        AND b.status <> N'CANCELLED'
-                        AND b.start_datetime < r.end_datetime
-                        AND b.end_datetime > r.start_datetime)
-               ORDER BY r.start_datetime, r.created_at DESC, r.request_id DESC""",
-            item_id, session["user_id"],
+        request_id = find_matching_request_for_borrower_item(
+            cursor, item_id, session["user_id"],
         )
-        match = cursor.fetchone()
-        return jsonify(request_id=match[0] if match else None, owns_item=False), 200
+        return jsonify(request_id=request_id, owns_item=False), 200
+    except Exception:
+        return _db_error()
+    finally:
+        if conn:
+            conn.close()
+
+
+@requests_bp.get("/nearby")
+@login_required
+def nearby_requests():
+    """List privacy-safe requests matching an available item owned by viewer."""
+    conn = None
+    try:
+        conn = get_connection()
+        matching_requests = find_nearby_requests(conn.cursor(), session["user_id"])
+        return jsonify(requests=matching_requests), 200
     except Exception:
         return _db_error()
     finally:

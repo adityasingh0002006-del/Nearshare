@@ -1,5 +1,7 @@
 """Schema-backed notification creation and private inbox queries."""
 
+from services.matching_service import MATCH_ELIGIBILITY_SQL
+
 
 class NotificationError(Exception):
     """Expected notification request failure with an HTTP status."""
@@ -34,35 +36,27 @@ def create_notification(cursor, user_id, request_id, message, notification_type)
 
 
 def notify_matching_item_owners(cursor, request_id):
-    """Notify distinct owners of currently eligible matching items."""
-    message = "A new request matches one of your available items."
-    notification_type = "REQUEST_CREATED"
+    """Notify each distinct owner with an eligible item for this request."""
+    message = "New request matching your item."
+    notification_type = "MATCHING_REQUEST"
     cursor.execute(
         """INSERT INTO dbo.Notifications (user_id, request_id, message, notification_type)
            SELECT DISTINCT i.owner_id, r.request_id, ?, ?
            FROM dbo.Requests AS r
            INNER JOIN dbo.Items AS i ON i.category_id = r.category_id
+           INNER JOIN dbo.Categories AS c ON c.category_id = r.category_id
            INNER JOIN dbo.Users AS item_owner ON item_owner.user_id = i.owner_id
+           INNER JOIN dbo.Localities AS item_locality
+               ON item_locality.locality_id = item_owner.locality_id
+           INNER JOIN dbo.Localities AS request_locality
+               ON request_locality.locality_id = r.locality_id
            WHERE r.request_id = ?
-             AND r.status IN (N'OPEN', N'MATCHED')
-             AND i.owner_id <> r.requester_id
-             AND i.is_available = 1
-             AND item_owner.is_active = 1
-             AND item_owner.locality_id = r.locality_id
-             AND i.rental_price <= r.max_budget
+             AND """ + MATCH_ELIGIBILITY_SQL + """
              AND NOT EXISTS
                  (SELECT 1 FROM dbo.Notifications AS n WITH (UPDLOCK, HOLDLOCK)
                   WHERE n.user_id = i.owner_id AND n.request_id = r.request_id
-                    AND n.notification_type = ? AND n.message = ?)
-             AND NOT EXISTS
-                 (SELECT 1
-                  FROM dbo.Bookings AS b
-                  INNER JOIN dbo.Offers AS o ON o.offer_id = b.offer_id
-                  WHERE o.item_id = i.item_id
-                    AND b.status <> N'CANCELLED'
-                    AND b.start_datetime < r.end_datetime
-                    AND b.end_datetime > r.start_datetime)""",
-        message, notification_type, request_id, notification_type, message,
+                    AND n.notification_type = ?)""",
+        message, notification_type, request_id, notification_type,
     )
 
 

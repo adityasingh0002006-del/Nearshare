@@ -240,7 +240,7 @@ def test_matching_item_endpoint_selects_only_an_eligible_owned_request(monkeypat
     match_query = next(query for connection in connections
                        for query, _ in connection.fake_cursor.executed
                        if "SELECT TOP (1) r.request_id" in query)
-    assert "request_locality.city = owner_locality.city" in match_query
+    assert "request_locality.city = item_locality.city" in match_query
 
 
 def test_matching_item_endpoint_prefers_the_soonest_matching_request(monkeypatch):

@@ -93,6 +93,17 @@ def test_item_owner_can_discover_matching_requests_from_item_detail():
     assert "href=\"#matches/${r.request_id}\">View match" in source
 
 
+def test_owner_request_feed_navigation_privacy_and_notification_link():
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "['requests-nearby','Requests Near You']" in source
+    assert "API.get('/api/requests/nearby')" in source
+    assert "No matching requests near you yet." in source
+    assert "Exact private addresses and requester contact details are never shown." in source
+    assert "href=\"#matches/${r.request_id}\">View Request" in source
+    assert "href=\"#requests-nearby\">View matching requests" in source
+
+
 def test_borrower_and_lender_views_have_distinct_offer_actions():
     source = APP_JS.read_text(encoding="utf-8")
 
