@@ -169,6 +169,19 @@ def test_create_request_persists_session_owner_and_utc_dates(monkeypatch):
     assert database["requests"][1][1] == 11
 
 
+def test_create_request_accepts_a_new_database_category(monkeypatch):
+    database = make_database()
+    database["categories"].add(13)
+    install_database(monkeypatch, database)
+    payload = valid_payload()
+    payload["category_id"] = 13
+
+    response = signed_in_client(user_id=11).post("/api/requests", json=payload)
+
+    assert response.status_code == 201
+    assert response.json["request"]["category_id"] == 13
+
+
 def test_repeated_identical_request_returns_existing_active_request(monkeypatch):
     database = make_database()
     connections = install_database(monkeypatch, database)
@@ -207,7 +220,7 @@ def test_matching_item_endpoint_selects_only_an_eligible_owned_request(monkeypat
         "owner_id": 200, "category_id": 4, "locality_id": 9,
         "is_available": True, "is_active": True, "rental_price": 40,
     }
-    install_database(monkeypatch, database)
+    connections = install_database(monkeypatch, database)
     client = signed_in_client(user_id=11)
 
     unrelated = valid_payload()
@@ -224,6 +237,10 @@ def test_matching_item_endpoint_selects_only_an_eligible_owned_request(monkeypat
     assert response.json == {
         "request_id": created.json["request"]["request_id"], "owns_item": False,
     }
+    match_query = next(query for connection in connections
+                       for query, _ in connection.fake_cursor.executed
+                       if "SELECT TOP (1) r.request_id" in query)
+    assert "request_locality.city = owner_locality.city" in match_query
 
 
 def test_matching_item_endpoint_prefers_the_soonest_matching_request(monkeypatch):

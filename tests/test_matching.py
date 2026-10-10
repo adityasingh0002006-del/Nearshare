@@ -112,6 +112,7 @@ def test_matching_sql_applies_schema_supported_eligibility_filters():
     select_clause = query.split("FROM dbo.Requests", 1)[0]
     assert "i.category_id = r.category_id" in query
     assert "item_locality.locality_id = r.locality_id" in query
+    assert "request_locality.city = item_locality.city" in query
     assert "i.is_available = 1" in query
     assert "item_owner.is_active = 1" in query
     assert "i.owner_id <> r.requester_id" in query
@@ -123,6 +124,22 @@ def test_matching_sql_applies_schema_supported_eligibility_filters():
     assert "email" not in select_clause
     assert "phone" not in select_clause
     assert cursor.params == (12,)
+
+
+def test_kanpur_request_cannot_match_lucknow_item_even_with_same_category():
+    class QueryCursor:
+        def execute(self, query, *params):
+            self.query, self.params = query, params
+
+        def fetchall(self):
+            # The query joins both locality rows and requires the cities to match;
+            # equal categories alone cannot make two different city rows qualify.
+            return []
+
+    cursor = QueryCursor()
+    assert find_matches(cursor, 41) == []
+    assert "item_locality.locality_id = r.locality_id" in cursor.query
+    assert "request_locality.city = item_locality.city" in cursor.query
 
 
 def test_matching_requires_authentication():

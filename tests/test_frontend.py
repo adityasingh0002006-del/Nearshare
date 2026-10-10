@@ -22,13 +22,17 @@ def test_request_form_uses_lookup_labels_validates_selections_and_submits_numeri
     source = APP_JS.read_text(encoding="utf-8")
 
     assert "formField('Category','category_id'" in source
-    assert "formField('Locality','locality_id'" in source
+    assert "formField('City','city'" in source
+    assert "setupCityLocality(city,locality" in source
+    assert "'/api/cities'" in source
+    assert "'/api/localities?city='+encodeURIComponent(selected)" in source
+    assert "delete data.city" in source
     assert "Loading categories…" in source
-    assert "Loading localities…" in source
+    assert "Loading '+noun.toLowerCase()+'…'" in source
     assert "status.textContent='Could not load '+noun.toLowerCase()+'. Please try again.'" in source
     assert "No '+noun.toLowerCase()+' are available yet." in source
-    assert "submit.disabled=!(categoryIds?.has(Number(category.value))&&localityIds?.has(Number(locality.value)))" in source
-    assert "if(!categoryIds?.has(Number(category.value))||!localityIds?.has(Number(locality.value)))" in source
+    assert "submit.disabled=!(categoryIds?.has(Number(category.value))&&localitySelection?.valid())" in source
+    assert "if(!categoryIds?.has(Number(category.value))||!localitySelection?.valid())" in source
     assert "d.category_id=Number(d.category_id);d.locality_id=Number(d.locality_id)" in source
     assert "data.locality_id=Number(data.locality_id)" in source
     assert "category_id:Number(fd.get('category_id'))" in source

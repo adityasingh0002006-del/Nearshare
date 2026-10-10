@@ -1,4 +1,6 @@
 from io import BytesIO
+from datetime import datetime
+from decimal import Decimal
 
 import pytest
 from PIL import Image
@@ -71,6 +73,52 @@ def test_create_rejects_invalid_condition_and_money_before_database(monkeypatch)
     })
     assert response.status_code == 400
     assert "condition" in response.json["error"]
+
+
+def test_create_item_accepts_a_new_database_category(monkeypatch):
+    now = datetime(2026, 10, 10)
+
+    class CategoryCursor:
+        result = None
+
+        def execute(self, query, *params):
+            if "SELECT 1 FROM dbo.Categories" in query:
+                self.result = (1,) if params == (13,) else None
+            elif "INSERT INTO dbo.Items" in query:
+                self.result = (91,)
+            elif "SELECT i.item_id" in query:
+                self.result = (91, 1, 13, "Other", "Tripod", None, "GOOD",
+                               Decimal("0.00"), Decimal("0.00"), True, now, now, "")
+            return self
+
+        def fetchone(self):
+            return self.result
+
+    class CategoryConnection:
+        def __init__(self):
+            self.fake_cursor = CategoryCursor()
+
+        def cursor(self):
+            return self.fake_cursor
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    connection = CategoryConnection()
+    monkeypatch.setattr("routes.items.get_connection", lambda: connection)
+    response = signed_in_client().post("/api/items", json={
+        "category_id": 13, "item_name": "Tripod", "condition": "GOOD",
+        "rental_price": 0, "security_deposit": 0, "is_available": True,
+    })
+    assert response.status_code == 201
+    assert response.json["item"]["category_id"] == 13
+    assert response.json["item"]["category_name"] == "Other"
 
 
 def test_update_delete_and_image_upload_reject_non_owner(monkeypatch):

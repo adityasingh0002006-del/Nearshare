@@ -19,6 +19,9 @@ def find_matches(cursor, request_id, viewer_id=None):
            INNER JOIN dbo.Localities AS item_locality
                ON item_locality.locality_id = item_owner.locality_id
               AND item_locality.locality_id = r.locality_id
+           INNER JOIN dbo.Localities AS request_locality
+               ON request_locality.locality_id = r.locality_id
+              AND request_locality.city = item_locality.city
            WHERE r.request_id = ?
              AND r.status IN (N'OPEN', N'MATCHED')
              AND i.owner_id <> r.requester_id

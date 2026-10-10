@@ -227,9 +227,14 @@ def find_matching_request_for_item(item_id):
                FROM dbo.Items AS i
                INNER JOIN dbo.Users AS item_owner
                    ON item_owner.user_id = i.owner_id
+               INNER JOIN dbo.Localities AS owner_locality
+                   ON owner_locality.locality_id = item_owner.locality_id
                INNER JOIN dbo.Requests AS r
                    ON r.category_id = i.category_id
-                  AND r.locality_id = item_owner.locality_id
+                  AND r.locality_id = owner_locality.locality_id
+               INNER JOIN dbo.Localities AS request_locality
+                   ON request_locality.locality_id = r.locality_id
+                  AND request_locality.city = owner_locality.city
                WHERE i.item_id = ?
                  AND r.requester_id = ?
                  AND r.requester_id <> i.owner_id

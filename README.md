@@ -22,7 +22,7 @@
 - Admin summary, paged user list and account activation/deactivation.
 - Loading, empty, error and success feedback; responsive layouts and keyboard-accessible form controls.
 
-The existing backend does **not** expose `GET /api/categories`, `GET /api/localities`, profile update/deactivation endpoints (there is no registered `/api/users` blueprint), item-owner names/contact details, admin item moderation, an admin booking list, an audit-log list, or a Power BI embed endpoint. The frontend does not invent these APIs. Category and locality IDs must currently be entered using values configured in the database. `/api/auth/me` returns `user_id`, `full_name`, `email`, and `role` only; it does not return phone, locality, account status or member-since data. The booking list/detail serializer also omits `borrower_id` and `owner_id`, so the frontend cannot identify the participant permitted to take a booking transition. The admin summary does not include item totals or completed-booking totals. Item API image arrays contain the canonical Blob URLs, but there is no signed-URL or authenticated image-proxy endpoint for viewing images from a private container. No item-list query filters are implemented by the API.
+The lookup API reads categories and cities from the database and returns localities filtered by city, so forms do not hardcode category or locality IDs. Profile update/deactivation endpoints (there is no registered `/api/users` blueprint), item-owner names/contact details, admin item moderation, an admin booking list, an audit-log list, or a Power BI embed endpoint are not exposed. `/api/auth/me` returns `user_id`, `full_name`, `email`, and `role` only; it does not return phone, locality, account status or member-since data. The booking list/detail serializer also omits `borrower_id` and `owner_id`, so the frontend cannot identify the participant permitted to take a booking transition. The admin summary does not include item totals or completed-booking totals. Item API image arrays contain the canonical Blob URLs, but there is no signed-URL or authenticated image-proxy endpoint for viewing images from a private container. No item-list query filters are implemented by the API.
 
 ## Run locally
 
@@ -67,6 +67,7 @@ Routes are defined in the Flask blueprints; all endpoints are under `/api` unles
 | Auth | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` |
 | Admin | `GET /api/admin/me`, `GET /api/admin/users`, `PATCH /api/admin/users/<user_id>/status`, `GET /api/admin/summary` |
 | Items | `GET, POST /api/items`, `GET, PUT, PATCH, DELETE /api/items/<item_id>`, `POST /api/items/<item_id>/images` |
+| Lookups | `GET /api/categories`, `GET /api/cities`, `GET /api/localities?city=<city>` |
 | Requests | `GET, POST /api/requests`, `GET /api/requests/<request_id>`, `PATCH /api/requests/<request_id>`, `GET /api/requests/<request_id>/matches`, `POST /api/requests/<request_id>/cancel` |
 | Offers | `POST /api/requests/<request_id>/offers`, `GET /api/offers`, `GET /api/requests/<request_id>/offers`, `GET /api/offers/<offer_id>`, `POST /api/offers/<offer_id>/withdraw`, `POST /api/offers/<offer_id>/accept`, `POST /api/offers/<offer_id>/reject` |
 | Bookings | `GET /api/bookings`, `GET /api/bookings/<booking_id>`, `POST /api/bookings/<booking_id>/handover`, `/return`, `/complete` |
