@@ -169,6 +169,22 @@ def test_create_request_persists_session_owner_and_utc_dates(monkeypatch):
     assert database["requests"][1][1] == 11
 
 
+def test_successful_request_creation_notifies_locality_users(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+    calls = []
+    monkeypatch.setattr(
+        "routes.requests.notify_locality_users_of_request",
+        lambda cursor, request_id: calls.append((cursor, request_id)),
+    )
+
+    response = signed_in_client(user_id=11).post("/api/requests", json=valid_payload())
+
+    assert response.status_code == 201
+    assert len(calls) == 1
+    assert calls[0][1] == response.json["request"]["request_id"]
+
+
 def test_create_request_accepts_a_new_database_category(monkeypatch):
     database = make_database()
     database["categories"].add(13)

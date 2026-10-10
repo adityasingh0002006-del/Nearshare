@@ -21,6 +21,7 @@ class NearbyCursor:
             "same_city": True,
             "same_locality": True,
             "same_category": True,
+            "viewer_active": True,
             "available_item": True,
             "active_owner": True,
             "within_budget": True,
@@ -29,13 +30,25 @@ class NearbyCursor:
         self.candidate.update(candidate or {})
         self.query = None
         self.params = None
+        self.feed_query = None
 
     def execute(self, query, *params):
         self.query, self.params = query, params
+        if "FROM dbo.Users AS viewer" in query:
+            self.feed_query = query
         return self
 
     def fetchall(self):
-        return [MATCHING_REQUEST] if all(self.candidate.values()) else []
+        if self.feed_query == self.query:
+            return [MATCHING_REQUEST] if all(
+                self.candidate[key] for key in
+                ("active_request", "different_requester", "same_city", "same_locality", "viewer_active")
+            ) else []
+        return [(41,)] if all(self.candidate[key] for key in (
+            "active_request", "different_requester", "same_city", "same_locality",
+            "same_category", "available_item", "active_owner", "within_budget",
+            "no_conflicting_booking",
+        )) else []
 
 
 class NearbyConnection:
@@ -64,28 +77,35 @@ def install_cursor(monkeypatch, cursor):
     )
 
 
-def test_owner_can_retrieve_safe_eligible_requests_for_their_items(monkeypatch):
+def test_local_user_can_retrieve_safe_requests_even_without_matching_item(monkeypatch):
+    from services.matching_service import find_nearby_requests
+
     cursor = NearbyCursor()
+    requests = find_nearby_requests(cursor, 20)
+    assert requests == [{
+        "request_id": 41, "title": "Cordless Drill", "category_id": 1,
+        "category_name": "Tools", "city": "Kanpur", "locality": "Kakadeo",
+        "start_datetime": "2026-10-10T17:35:00", "end_datetime": "2026-10-11T16:35:00",
+        "max_budget": "50.00", "status": "OPEN",
+    }]
+    assert "dbo.Items" not in cursor.query
+    assert "request_locality.locality_id = viewer_locality.locality_id" in cursor.query
+    assert "request_locality.city = viewer_locality.city" in cursor.query
+
+
+def test_owner_feed_marks_only_requests_with_a_fully_eligible_item(monkeypatch):
+    cursor = NearbyCursor(candidate={"available_item": False})
     install_cursor(monkeypatch, cursor)
 
     response = signed_in_client(user_id=20).get("/api/requests/nearby")
 
     assert response.status_code == 200
-    assert response.json == {"requests": [{
-        "request_id": 41,
-        "title": "Cordless Drill",
-        "category_id": 1,
-        "category_name": "Tools",
-        "city": "Kanpur",
-        "locality": "Kakadeo",
-        "start_datetime": "2026-10-10T17:35:00",
-        "end_datetime": "2026-10-11T16:35:00",
-        "max_budget": "50.00",
-        "status": "OPEN",
-    }]}
+    assert len(response.json["requests"]) == 1
+    assert response.json["requests"][0]["has_matching_item"] is False
+    assert response.json["requests"][0]["max_budget"] == "50.00"
     assert cursor.params == (20,)
-    assert "item_owner.user_id = ?" in cursor.query
-    select_clause = cursor.query.split("FROM dbo.Requests", 1)[0]
+    assert "viewer.user_id = ?" in cursor.feed_query
+    select_clause = cursor.feed_query.split("FROM dbo.Users AS viewer", 1)[0]
     assert "requester_id" not in select_clause
     assert "email" not in select_clause
     assert "phone" not in select_clause
@@ -101,17 +121,13 @@ def test_nearby_request_feed_requires_authentication():
     ("ineligible", "required_sql"),
     [
         ("active_request", "r.status IN (N'OPEN', N'MATCHED')"),
-        ("different_requester", "i.owner_id <> r.requester_id"),
-        ("same_city", "request_locality.city = item_locality.city"),
-        ("same_locality", "item_locality.locality_id = r.locality_id"),
-        ("same_category", "i.category_id = r.category_id"),
-        ("available_item", "i.is_available = 1"),
-        ("active_owner", "item_owner.is_active = 1"),
-        ("within_budget", "i.rental_price <= r.max_budget"),
-        ("no_conflicting_booking", "b.start_datetime < r.end_datetime"),
+        ("different_requester", "r.requester_id <> viewer.user_id"),
+        ("same_city", "request_locality.city = viewer_locality.city"),
+        ("same_locality", "request_locality.locality_id = viewer_locality.locality_id"),
+        ("viewer_active", "viewer.is_active = 1"),
     ],
 )
-def test_nearby_feed_excludes_ineligible_requests(monkeypatch, ineligible, required_sql):
+def test_nearby_feed_excludes_nonlocal_or_inactive_requests(monkeypatch, ineligible, required_sql):
     cursor = NearbyCursor(candidate={ineligible: False})
     install_cursor(monkeypatch, cursor)
 
@@ -119,7 +135,19 @@ def test_nearby_feed_excludes_ineligible_requests(monkeypatch, ineligible, requi
 
     assert response.status_code == 200
     assert response.json == {"requests": []}
-    assert required_sql in cursor.query
+    assert required_sql in cursor.feed_query
+
+
+@pytest.mark.parametrize("ineligible", [
+    "same_category", "available_item", "active_owner", "within_budget", "no_conflicting_booking",
+])
+def test_feed_still_shows_request_but_marks_it_unofferable_without_eligible_item(monkeypatch, ineligible):
+    cursor = NearbyCursor(candidate={ineligible: False})
+    install_cursor(monkeypatch, cursor)
+    response = signed_in_client().get("/api/requests/nearby")
+    assert response.status_code == 200
+    assert len(response.json["requests"]) == 1
+    assert response.json["requests"][0]["has_matching_item"] is False
 
 
 def test_nearby_feed_deduplicates_request_matching_multiple_owned_items():

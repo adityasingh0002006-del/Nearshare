@@ -359,6 +359,47 @@ def get_booking(cursor, booking_id):
     return _booking_by_id(cursor, booking_id)
 
 
+def get_booking_contacts(cursor, booking_id, actor_id):
+    """Return participant contacts only for an accepted, non-cancelled deal."""
+    cursor.execute(
+        """SELECT b.borrower_id, o.owner_id, b.status, o.status
+           FROM dbo.Bookings AS b
+           INNER JOIN dbo.Offers AS o ON o.offer_id = b.offer_id
+           WHERE b.booking_id = ?""",
+        booking_id,
+    )
+    booking = cursor.fetchone()
+    if not booking:
+        raise BookingWorkflowError("Booking not found", 404)
+
+    borrower_id, owner_id, booking_status, offer_status = booking
+    if actor_id not in {borrower_id, owner_id}:
+        raise BookingWorkflowError("You are not a participant in this booking", 403)
+    if booking_status not in {"BOOKED", "HANDED_OVER", "RETURNED", "COMPLETED"} \
+            or offer_status != "ACCEPTED":
+        raise BookingWorkflowError("Contact details are available only for an accepted booking", 409)
+
+    cursor.execute(
+        """SELECT borrower.full_name, borrower.phone, borrower.email,
+                  owner.full_name, owner.phone, owner.email
+           FROM dbo.Bookings AS b
+           INNER JOIN dbo.Offers AS o ON o.offer_id = b.offer_id
+           INNER JOIN dbo.Users AS borrower ON borrower.user_id = b.borrower_id
+           INNER JOIN dbo.Users AS owner ON owner.user_id = o.owner_id
+           WHERE b.booking_id = ? AND b.borrower_id = ? AND o.owner_id = ?
+             AND b.status IN (N'BOOKED', N'HANDED_OVER', N'RETURNED', N'COMPLETED')
+             AND o.status = N'ACCEPTED'""",
+        booking_id, borrower_id, owner_id,
+    )
+    contacts = cursor.fetchone()
+    if not contacts:
+        raise BookingWorkflowError("Contact details are not available", 409)
+    return {
+        "borrower": {"name": contacts[0], "phone": contacts[1], "email": contacts[2]},
+        "owner": {"name": contacts[3], "phone": contacts[4], "email": contacts[5]},
+    }
+
+
 def serialize_booking(row):
     return {
         "booking_id": row[0],

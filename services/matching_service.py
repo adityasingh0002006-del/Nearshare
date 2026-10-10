@@ -84,27 +84,48 @@ def find_matching_requests(cursor, item_id):
     return _serialize_matching_requests(cursor.fetchall())
 
 
-def find_nearby_requests(cursor, owner_id):
-    """Return distinct eligible request details for all of one owner's items."""
+def find_nearby_requests(cursor, user_id):
+    """Return active requests in the viewer's city and locality, without item gating."""
     cursor.execute(
         """SELECT DISTINCT r.request_id, r.item_description, r.category_id,
                   c.category_name, request_locality.city,
                   request_locality.locality_name, r.start_datetime,
                   r.end_datetime, r.max_budget, r.status
+           FROM dbo.Users AS viewer
+           INNER JOIN dbo.Localities AS viewer_locality
+               ON viewer_locality.locality_id = viewer.locality_id
+           INNER JOIN dbo.Requests AS r
+               ON r.requester_id <> viewer.user_id
+           INNER JOIN dbo.Categories AS c ON c.category_id = r.category_id
+           INNER JOIN dbo.Localities AS request_locality
+               ON request_locality.locality_id = r.locality_id
+           WHERE viewer.user_id = ?
+             AND viewer.is_active = 1
+             AND r.status IN (N'OPEN', N'MATCHED')
+             AND request_locality.locality_id = viewer_locality.locality_id
+             AND request_locality.city = viewer_locality.city
+           ORDER BY r.start_datetime, r.request_id""",
+        user_id,
+    )
+    return _serialize_matching_requests(cursor.fetchall())
+
+
+def find_owner_matching_request_ids(cursor, owner_id):
+    """Return request IDs for which this user's listed items are eligible."""
+    cursor.execute(
+        """SELECT DISTINCT r.request_id
            FROM dbo.Requests AS r
            INNER JOIN dbo.Items AS i ON i.category_id = r.category_id
-           INNER JOIN dbo.Categories AS c ON c.category_id = r.category_id
            INNER JOIN dbo.Users AS item_owner ON item_owner.user_id = i.owner_id
            INNER JOIN dbo.Localities AS item_locality
                ON item_locality.locality_id = item_owner.locality_id
            INNER JOIN dbo.Localities AS request_locality
                ON request_locality.locality_id = r.locality_id
            WHERE item_owner.user_id = ?
-             AND """ + MATCH_ELIGIBILITY_SQL + """
-           ORDER BY r.start_datetime, r.request_id""",
+             AND """ + MATCH_ELIGIBILITY_SQL,
         owner_id,
     )
-    return _serialize_matching_requests(cursor.fetchall())
+    return {row[0] for row in cursor.fetchall()}
 
 
 def find_matching_request_for_borrower_item(cursor, item_id, requester_id):

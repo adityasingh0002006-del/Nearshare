@@ -12,7 +12,7 @@ from services.notification_service import (
     create_notification,
     list_notifications,
     mark_notification_read,
-    notify_matching_item_owners,
+    notify_locality_users_of_request,
     unread_count,
 )
 
@@ -33,20 +33,29 @@ class NotificationCursor:
             row = next((n for n in self.database["notifications"]
                         if n[1:5] == (user_id, request_id, message, notification_type)), None)
             self.result = (row[0],) if row else None
-        elif "INSERT INTO dbo.Notifications" in query and "SELECT DISTINCT i.owner_id" in query:
-            message, notification_type, request_id, check_type = params
-            owners = {
-                item["owner_id"] for item in self.database["items"]
-                if item["request_id"] == request_id and item["matches"]
-            }
-            for owner_id in owners:
+        elif "INSERT INTO dbo.Notifications" in query and "SELECT DISTINCT recipient.user_id" in query:
+            notification_type, request_id, check_type = params
+            request = self.database.get("request")
+            for recipient in self.database.get("users", []):
+                if not request or request["request_id"] != request_id:
+                    continue
+                if (not recipient["active"] or recipient["user_id"] == request["requester_id"]
+                        or recipient["locality_id"] != request["locality_id"]
+                        or recipient["city"] != request["city"]
+                        or request["status"] not in {"OPEN", "MATCHED"}):
+                    continue
+                message = (
+                    f"New nearby request: {request['title']} · {request['category']} · "
+                    f"{request['locality']}, {request['city']} · {request['dates']} · "
+                    f"Budget up to ₹{request['budget']}/day."
+                )
                 already = any(
-                    row[1] == owner_id and row[2] == request_id
+                    row[1] == recipient["user_id"] and row[2] == request_id
                     and row[4] == check_type
                     for row in self.database["notifications"]
                 )
                 if not already:
-                    self._insert(owner_id, request_id, message, notification_type)
+                    self._insert(recipient["user_id"], request_id, message, notification_type)
         elif "INSERT INTO dbo.Notifications" in query:
             user_id, request_id, message, notification_type = params
             self._insert(user_id, request_id, message, notification_type)
@@ -143,7 +152,7 @@ class OfferCreationConnection(NotificationConnection):
 
 
 def make_database():
-    return {"notifications": [], "next_id": 1, "items": []}
+    return {"notifications": [], "next_id": 1, "items": [], "users": []}
 
 
 def install_database(monkeypatch, database):
@@ -175,31 +184,41 @@ def test_notification_creation_is_idempotent_for_same_event():
     assert len(database["notifications"]) == 1
 
 
-def test_new_request_notifies_distinct_matching_item_owners_once():
+def test_new_request_notifies_all_active_same_locality_users_without_items_once():
     database = make_database()
-    database["items"] = [
-        {"owner_id": 20, "request_id": 5, "matches": True},
-        {"owner_id": 20, "request_id": 5, "matches": True},
-        {"owner_id": 21, "request_id": 5, "matches": False},
+    database["request"] = {
+        "request_id": 5, "requester_id": 10, "status": "OPEN", "title": "Cordless Drill",
+        "category": "Tools", "locality_id": 9, "locality": "Kakadeo", "city": "Kanpur",
+        "dates": "Oct 10–11", "budget": "50",
+    }
+    database["users"] = [
+        {"user_id": 10, "active": True, "locality_id": 9, "city": "Kanpur"},
+        {"user_id": 20, "active": True, "locality_id": 9, "city": "Kanpur"},
+        {"user_id": 21, "active": True, "locality_id": 9, "city": "Kanpur"},
+        {"user_id": 22, "active": True, "locality_id": 8, "city": "Kanpur"},
+        {"user_id": 23, "active": True, "locality_id": 9, "city": "Lucknow"},
+        {"user_id": 24, "active": False, "locality_id": 9, "city": "Kanpur"},
     ]
     cursor = NotificationCursor(database)
 
-    notify_matching_item_owners(cursor, 5)
-    notify_matching_item_owners(cursor, 5)
+    notify_locality_users_of_request(cursor, 5)
+    notify_locality_users_of_request(cursor, 5)
 
-    assert len(database["notifications"]) == 1
-    assert database["notifications"][0][1:5] == (
-        20, 5, "New request matching your item.", "MATCHING_REQUEST",
-    )
+    assert {row[1] for row in database["notifications"]} == {20, 21}
+    assert len(database["notifications"]) == 2
+    assert all(row[4] == "MATCHING_REQUEST" for row in database["notifications"])
+    message = database["notifications"][0][3]
+    assert all(value in message for value in ("Cordless Drill", "Tools", "Kakadeo", "Kanpur", "Oct 10", "50"))
+    assert all(value not in message for value in ("requester", "email", "phone", "address", "Account A"))
     query = cursor.executed[0][0]
-    assert "SELECT DISTINCT i.owner_id, r.request_id" in query
-    assert "request_locality.city = item_locality.city" in query
-    assert "item_locality.locality_id = r.locality_id" in query
-    assert "i.category_id = r.category_id" in query
-    assert "i.rental_price <= r.max_budget" in query
-    assert "b.start_datetime < r.end_datetime" in query
-    assert "b.end_datetime > r.start_datetime" in query
-    assert "n.user_id = i.owner_id AND n.request_id = r.request_id" in query
+    assert "SELECT DISTINCT recipient.user_id, r.request_id" in query
+    assert "recipient.is_active = 1" in query
+    assert "recipient.user_id <> r.requester_id" in query
+    assert "recipient_locality.city = request_locality.city" in query
+    assert "recipient_locality.locality_id = request_locality.locality_id" in query
+    assert "dbo.Items" not in query
+    assert "r.status IN (N'OPEN', N'MATCHED')" in query
+    assert "n.user_id = recipient.user_id AND n.request_id = r.request_id" in query
     assert "n.notification_type = ?" in query
 
 

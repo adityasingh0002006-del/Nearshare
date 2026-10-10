@@ -59,6 +59,21 @@ class WorkflowCursor:
                     and offer[8] == "PENDING"
                 })
             ]
+        elif "SELECT b.borrower_id, o.owner_id, b.status, o.status" in query:
+            booking = next((row for row in self.database["bookings"] if row[0] == params[0]), None)
+            offer = self._offer(booking[1]) if booking else None
+            if booking and offer:
+                self.result = (booking[2], offer[3], booking[7], offer[8])
+        elif "SELECT borrower.full_name, borrower.phone, borrower.email" in query:
+            booking_id, borrower_id, owner_id = params
+            booking = next((row for row in self.database["bookings"] if row[0] == booking_id), None)
+            borrower = self.database["users"].get(borrower_id)
+            owner = self.database["users"].get(owner_id)
+            if booking and borrower and owner:
+                self.result = (
+                    borrower["name"], borrower["phone"], borrower["email"],
+                    owner["name"], owner["phone"], owner["email"],
+                )
         elif "WHERE existing_offer.item_id = ?" in query:
             item_id, end_datetime, start_datetime = params
             offer_ids = {offer[0] for offer in self.database["offers"] if offer[2] == item_id}
@@ -212,6 +227,10 @@ def make_database():
         "bookings": [],
         "notifications": [],
         "audits": [],
+        "users": {
+            100: {"name": "Account A", "phone": "111-111", "email": "a@example.test"},
+            200: {"name": "Account B", "phone": "222-222", "email": "b@example.test"},
+        },
         "next_booking_id": 1,
         "fail_on": None,
     }
@@ -267,6 +286,79 @@ def test_accept_offer_creates_booking_and_updates_related_states(monkeypatch):
     assert len(database["notifications"]) == 2
     assert len(database["audits"]) == 1
     assert connections[-1].commits == 1
+
+
+def test_both_participants_can_access_contacts_only_after_booking_acceptance(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+    borrower = signed_in_client(user_id=100)
+    owner = signed_in_client(user_id=200)
+
+    assert borrower.get("/api/bookings/1/contacts").status_code == 404
+    assert owner.get("/api/bookings/1/contacts").status_code == 404
+
+    accepted = borrower.post("/api/offers/1/accept")
+    assert accepted.status_code == 200
+    borrower_contacts = borrower.get("/api/bookings/1/contacts")
+    owner_contacts = owner.get("/api/bookings/1/contacts")
+
+    expected = {
+        "borrower": {"name": "Account A", "phone": "111-111", "email": "a@example.test"},
+        "owner": {"name": "Account B", "phone": "222-222", "email": "b@example.test"},
+    }
+    assert borrower_contacts.status_code == owner_contacts.status_code == 200
+    assert borrower_contacts.json["contacts"] == owner_contacts.json["contacts"] == expected
+
+
+def test_pending_offer_without_accepted_booking_never_discloses_contact(monkeypatch):
+    database = make_database()
+    database["bookings"].append((
+        1, 1, 100, datetime(2026, 11, 1), datetime(2026, 11, 3),
+        Decimal("35.00"), Decimal("10.00"), "BOOKED", datetime(2026, 10, 10),
+    ))
+    install_database(monkeypatch, database)
+
+    borrower = signed_in_client(user_id=100).get("/api/bookings/1/contacts")
+    owner = signed_in_client(user_id=200).get("/api/bookings/1/contacts")
+
+    assert borrower.status_code == owner.status_code == 409
+    assert "contacts" not in borrower.json
+    assert "contacts" not in owner.json
+
+
+def test_third_party_cannot_access_booking_contacts_or_enumerate_other_booking(monkeypatch):
+    database = make_database()
+    seed_booking(database)
+    database["offers"].append((
+        2, 2, 21, 201, "RENTAL", Decimal("40.00"), Decimal("0.00"), None,
+        "ACCEPTED", datetime(2026, 10, 10),
+    ))
+    database["bookings"].append((
+        2, 2, 101, datetime(2026, 12, 1), datetime(2026, 12, 3),
+        Decimal("40.00"), Decimal("0.00"), "BOOKED", datetime(2026, 10, 10),
+    ))
+    install_database(monkeypatch, database)
+
+    outsider = signed_in_client(user_id=300)
+    forbidden = outsider.get("/api/bookings/1/contacts")
+    missing = outsider.get("/api/bookings/3/contacts")
+    changed_booking = signed_in_client(user_id=100).get("/api/bookings/2/contacts")
+
+    assert forbidden.status_code == 403
+    assert missing.status_code == 404
+    assert changed_booking.status_code == 403
+    assert "contacts" not in forbidden.json
+    assert "contacts" not in missing.json
+
+
+def test_booking_contact_endpoint_requires_authentication():
+    client = create_app({"TESTING": True}).test_client()
+    assert client.get("/api/bookings/1/contacts").status_code == 401
+
+
+def test_contact_endpoint_rejects_invalid_booking_id():
+    client = signed_in_client()
+    assert client.get("/api/bookings/0/contacts").status_code == 400
 
 
 def test_reject_offer_changes_only_target_and_notifies_creator(monkeypatch):

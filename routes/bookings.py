@@ -7,6 +7,7 @@ from middleware.auth import login_required
 from services.booking_service import (
     BookingWorkflowError,
     get_booking,
+    get_booking_contacts,
     list_bookings,
     serialize_booking,
     transition_booking,
@@ -50,6 +51,27 @@ def get_booking_detail(booking_id):
         if session["user_id"] not in {row[2], row[3]}:
             return jsonify(error="You are not a participant in this booking"), 403
         return jsonify(booking=serialize_booking(row)), 200
+    except Exception:
+        return _db_error()
+    finally:
+        if conn:
+            conn.close()
+
+
+@bookings_bp.get("/<int:booking_id>/contacts")
+@login_required
+def get_booking_contact_details(booking_id):
+    if booking_id <= 0:
+        return jsonify(error="booking_id must be a positive integer"), 400
+    conn = None
+    try:
+        conn = get_connection()
+        contacts = get_booking_contacts(
+            conn.cursor(), booking_id, session["user_id"],
+        )
+        return jsonify(contacts=contacts), 200
+    except BookingWorkflowError as exc:
+        return jsonify(error=str(exc)), exc.status_code
     except Exception:
         return _db_error()
     finally:

@@ -11,10 +11,11 @@ from middleware.auth import login_required
 from services.matching_service import (
     find_matching_request_for_borrower_item,
     find_matches,
+    find_owner_matching_request_ids,
     find_nearby_requests,
 )
 from services.notification_service import (
-    notify_matching_item_owners,
+    notify_locality_users_of_request,
     notify_request_offer_owners,
 )
 
@@ -185,7 +186,7 @@ def create_request():
             values["max_budget"],
         )
         request_id = cursor.fetchone()[0]
-        notify_matching_item_owners(cursor, request_id)
+        notify_locality_users_of_request(cursor, request_id)
         cursor.execute(f"SELECT {_REQUEST_COLUMNS} FROM dbo.Requests WHERE request_id = ?", request_id)
         row = cursor.fetchone()
         conn.commit()
@@ -240,12 +241,20 @@ def find_matching_request_for_item(item_id):
 @requests_bp.get("/nearby")
 @login_required
 def nearby_requests():
-    """List privacy-safe requests matching an available item owned by viewer."""
+    """List privacy-safe local requests and mark those with an eligible owned item."""
     conn = None
     try:
         conn = get_connection()
-        matching_requests = find_nearby_requests(conn.cursor(), session["user_id"])
-        return jsonify(requests=matching_requests), 200
+        cursor = conn.cursor()
+        nearby = find_nearby_requests(cursor, session["user_id"])
+        eligible_request_ids = find_owner_matching_request_ids(
+            cursor, session["user_id"],
+        ) if nearby else set()
+        for target_request in nearby:
+            target_request["has_matching_item"] = (
+                target_request["request_id"] in eligible_request_ids
+            )
+        return jsonify(requests=nearby), 200
     except Exception:
         return _db_error()
     finally:

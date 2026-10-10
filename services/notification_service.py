@@ -1,8 +1,5 @@
 """Schema-backed notification creation and private inbox queries."""
 
-from services.matching_service import MATCH_ELIGIBILITY_SQL
-
-
 class NotificationError(Exception):
     """Expected notification request failure with an HTTP status."""
 
@@ -35,28 +32,36 @@ def create_notification(cursor, user_id, request_id, message, notification_type)
     return True
 
 
-def notify_matching_item_owners(cursor, request_id):
-    """Notify each distinct owner with an eligible item for this request."""
-    message = "New request matching your item."
+def notify_locality_users_of_request(cursor, request_id):
+    """Notify every other active user in the request's exact locality."""
     notification_type = "MATCHING_REQUEST"
     cursor.execute(
         """INSERT INTO dbo.Notifications (user_id, request_id, message, notification_type)
-           SELECT DISTINCT i.owner_id, r.request_id, ?, ?
+           SELECT DISTINCT recipient.user_id, r.request_id,
+                  CONCAT(N'New nearby request: ', r.item_description,
+                         N' · ', c.category_name,
+                         N' · ', request_locality.locality_name,
+                         N', ', request_locality.city,
+                         N' · ', CONVERT(NVARCHAR(16), r.start_datetime, 120),
+                         N' – ', CONVERT(NVARCHAR(16), r.end_datetime, 120),
+                         N' · Budget up to ₹', CONVERT(NVARCHAR(32), r.max_budget), N'/day.'), ?
            FROM dbo.Requests AS r
-           INNER JOIN dbo.Items AS i ON i.category_id = r.category_id
            INNER JOIN dbo.Categories AS c ON c.category_id = r.category_id
-           INNER JOIN dbo.Users AS item_owner ON item_owner.user_id = i.owner_id
-           INNER JOIN dbo.Localities AS item_locality
-               ON item_locality.locality_id = item_owner.locality_id
            INNER JOIN dbo.Localities AS request_locality
                ON request_locality.locality_id = r.locality_id
+           INNER JOIN dbo.Users AS recipient
+               ON recipient.is_active = 1 AND recipient.user_id <> r.requester_id
+           INNER JOIN dbo.Localities AS recipient_locality
+               ON recipient_locality.locality_id = recipient.locality_id
            WHERE r.request_id = ?
-             AND """ + MATCH_ELIGIBILITY_SQL + """
+             AND r.status IN (N'OPEN', N'MATCHED')
+             AND recipient_locality.locality_id = request_locality.locality_id
+             AND recipient_locality.city = request_locality.city
              AND NOT EXISTS
                  (SELECT 1 FROM dbo.Notifications AS n WITH (UPDLOCK, HOLDLOCK)
-                  WHERE n.user_id = i.owner_id AND n.request_id = r.request_id
+                  WHERE n.user_id = recipient.user_id AND n.request_id = r.request_id
                     AND n.notification_type = ?)""",
-        message, notification_type, request_id, notification_type,
+        notification_type, request_id, notification_type,
     )
 
 

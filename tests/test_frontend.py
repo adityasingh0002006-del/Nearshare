@@ -100,6 +100,8 @@ def test_owner_request_feed_navigation_privacy_and_notification_link():
     assert "API.get('/api/requests/nearby')" in source
     assert "No matching requests near you yet." in source
     assert "Exact private addresses and requester contact details are never shown." in source
+    assert "whether or not you have a matching item listed" in source
+    assert "r.has_matching_item?" in source
     assert "href=\"#matches/${r.request_id}\">View Request" in source
     assert "href=\"#requests-nearby\">View matching requests" in source
 
@@ -115,3 +117,14 @@ def test_borrower_and_lender_views_have_distinct_offer_actions():
     assert "API.get('/api/offers')" in source
     assert "View matching items" in source
     assert "View offer" in source
+
+
+def test_contact_details_are_loaded_from_participant_scoped_booking_endpoint():
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "contactAvailable=states.includes(b.status)" in source
+    assert "data-contacts=\"${b.booking_id}\"" in source
+    assert "API.get(`/api/bookings/${id}/contacts`)" in source
+    assert "esc(contacts.borrower.email)" in source
+    assert "esc(contacts.owner.email)" in source
+    assert "Shared with booking participants after offer acceptance." in source
