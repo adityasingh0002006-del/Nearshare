@@ -201,6 +201,11 @@ def test_create_request_accepts_a_new_database_category(monkeypatch):
 def test_repeated_identical_request_returns_existing_active_request(monkeypatch):
     database = make_database()
     connections = install_database(monkeypatch, database)
+    notifications = []
+    monkeypatch.setattr(
+        "routes.requests.notify_locality_users_of_request",
+        lambda cursor, request_id: notifications.append(request_id),
+    )
     client = signed_in_client(user_id=11)
 
     first = client.post("/api/requests", json=valid_payload())
@@ -211,7 +216,9 @@ def test_repeated_identical_request_returns_existing_active_request(monkeypatch)
     assert repeated.json["already_exists"] is True
     assert repeated.json["request"]["request_id"] == first.json["request"]["request_id"]
     assert len(database["requests"]) == 1
-    assert connections[-1].rollbacks == 1
+    assert notifications == [1, 1]
+    assert connections[-1].commits == 1
+    assert connections[-1].rollbacks == 0
 
 
 def test_requests_for_different_dates_remain_distinct(monkeypatch):

@@ -29,13 +29,21 @@ class NotificationCursor:
         self.result = None
         self.results = []
         if "SELECT notification_id" in query and "WITH (UPDLOCK, HOLDLOCK)" in query:
-            user_id, request_id, notification_type, message = params
+            user_id, request_id, notification_type = params[:3]
+            message = params[3] if len(params) > 3 else None
             row = next((n for n in self.database["notifications"]
-                        if n[1:5] == (user_id, request_id, message, notification_type)), None)
+                        if n[1] == user_id and n[2] == request_id
+                        and n[4] == notification_type
+                        and (message is None or n[3] == message)), None)
             self.result = (row[0],) if row else None
-        elif "INSERT INTO dbo.Notifications" in query and "SELECT DISTINCT recipient.user_id" in query:
-            notification_type, request_id, check_type = params
-            request = self.database.get("request")
+        elif "SELECT DISTINCT recipient.user_id, r.item_description" in query:
+            request_id = params[0]
+            requests = self.database.get("requests")
+            if requests is None:
+                request = self.database.get("request")
+                requests = {request["request_id"]: request} if request else {}
+            request = requests.get(request_id)
+            self.results = []
             for recipient in self.database.get("users", []):
                 if not request or request["request_id"] != request_id:
                     continue
@@ -44,18 +52,11 @@ class NotificationCursor:
                         or recipient["city"] != request["city"]
                         or request["status"] not in {"OPEN", "MATCHED"}):
                     continue
-                message = (
-                    f"New nearby request: {request['title']} · {request['category']} · "
-                    f"{request['locality']}, {request['city']} · {request['dates']} · "
-                    f"Budget up to ₹{request['budget']}/day."
-                )
-                already = any(
-                    row[1] == recipient["user_id"] and row[2] == request_id
-                    and row[4] == check_type
-                    for row in self.database["notifications"]
-                )
-                if not already:
-                    self._insert(recipient["user_id"], request_id, message, notification_type)
+                self.results.append((
+                    recipient["user_id"], request["title"], request["category"],
+                    request["locality"], request["city"], request["start"],
+                    request["end"], request["budget"],
+                ))
         elif "INSERT INTO dbo.Notifications" in query:
             user_id, request_id, message, notification_type = params
             self._insert(user_id, request_id, message, notification_type)
@@ -181,7 +182,8 @@ def test_notification_creation_is_idempotent_for_same_event():
 
     assert create_notification(cursor, 10, 20, "Offer received", "OFFER_RECEIVED") is True
     assert create_notification(cursor, 10, 20, "Offer received", "OFFER_RECEIVED") is False
-    assert len(database["notifications"]) == 1
+    assert create_notification(cursor, 10, 20, "Another offer received", "OFFER_RECEIVED") is True
+    assert len(database["notifications"]) == 2
 
 
 def test_new_request_notifies_all_active_same_locality_users_without_items_once():
@@ -189,12 +191,14 @@ def test_new_request_notifies_all_active_same_locality_users_without_items_once(
     database["request"] = {
         "request_id": 5, "requester_id": 10, "status": "OPEN", "title": "Cordless Drill",
         "category": "Tools", "locality_id": 9, "locality": "Kakadeo", "city": "Kanpur",
-        "dates": "Oct 10–11", "budget": "50",
+        "start": datetime(2026, 10, 10, 17, 35), "end": datetime(2026, 10, 11, 16, 35),
+        "budget": Decimal("50.00"),
     }
     database["users"] = [
         {"user_id": 10, "active": True, "locality_id": 9, "city": "Kanpur"},
         {"user_id": 20, "active": True, "locality_id": 9, "city": "Kanpur"},
         {"user_id": 21, "active": True, "locality_id": 9, "city": "Kanpur"},
+        {"user_id": 25, "active": True, "locality_id": 9, "city": "Kanpur", "has_matching_item": True},
         {"user_id": 22, "active": True, "locality_id": 8, "city": "Kanpur"},
         {"user_id": 23, "active": True, "locality_id": 9, "city": "Lucknow"},
         {"user_id": 24, "active": False, "locality_id": 9, "city": "Kanpur"},
@@ -204,22 +208,60 @@ def test_new_request_notifies_all_active_same_locality_users_without_items_once(
     notify_locality_users_of_request(cursor, 5)
     notify_locality_users_of_request(cursor, 5)
 
-    assert {row[1] for row in database["notifications"]} == {20, 21}
-    assert len(database["notifications"]) == 2
+    assert {row[1] for row in database["notifications"]} == {20, 21, 25}
+    assert len(database["notifications"]) == 3
     assert all(row[4] == "MATCHING_REQUEST" for row in database["notifications"])
     message = database["notifications"][0][3]
-    assert all(value in message for value in ("Cordless Drill", "Tools", "Kakadeo", "Kanpur", "Oct 10", "50"))
+    assert all(value in message for value in (
+        "Cordless Drill", "Tools", "Kakadeo", "Kanpur", "2026-10-10", "2026-10-11", "50",
+    ))
     assert all(value not in message for value in ("requester", "email", "phone", "address", "Account A"))
     query = cursor.executed[0][0]
-    assert "SELECT DISTINCT recipient.user_id, r.request_id" in query
+    assert "SELECT DISTINCT recipient.user_id, r.item_description" in query
     assert "recipient.is_active = 1" in query
     assert "recipient.user_id <> r.requester_id" in query
     assert "recipient_locality.city = request_locality.city" in query
     assert "recipient_locality.locality_id = request_locality.locality_id" in query
     assert "dbo.Items" not in query
     assert "r.status IN (N'OPEN', N'MATCHED')" in query
-    assert "n.user_id = recipient.user_id AND n.request_id = r.request_id" in query
-    assert "n.notification_type = ?" in query
+
+
+def test_multiple_locality_requests_are_visible_in_notifications_api_and_unread_count(monkeypatch):
+    database = make_database()
+    base_request = {
+        "requester_id": 10, "status": "OPEN", "category": "Tools",
+        "locality_id": 9, "locality": "Kakadeo", "city": "Kanpur",
+        "start": datetime(2026, 10, 10, 17, 35),
+        "end": datetime(2026, 10, 11, 16, 35), "budget": Decimal("50.00"),
+    }
+    database["requests"] = {
+        5: {**base_request, "request_id": 5, "title": "Cordless Drill"},
+        6: {**base_request, "request_id": 6, "title": "Power Sander"},
+    }
+    database["users"] = [
+        {"user_id": 10, "active": True, "locality_id": 9, "city": "Kanpur"},
+        {"user_id": 20, "active": True, "locality_id": 9, "city": "Kanpur"},
+        {"user_id": 30, "active": True, "locality_id": 8, "city": "Kanpur"},
+    ]
+    cursor = NotificationCursor(database)
+
+    notify_locality_users_of_request(cursor, 5)
+    notify_locality_users_of_request(cursor, 5)
+    notify_locality_users_of_request(cursor, 6)
+
+    assert {(row[1], row[2]) for row in database["notifications"]} == {(20, 5), (20, 6)}
+    install_database(monkeypatch, database)
+    client = signed_in_client(user_id=20)
+
+    inbox = client.get("/api/notifications?page=1&per_page=50")
+    unread = client.get("/api/notifications/unread-count")
+
+    assert inbox.status_code == unread.status_code == 200
+    assert {row["request_id"] for row in inbox.json["notifications"]} == {5, 6}
+    assert all(row["notification_type"] == "MATCHING_REQUEST" for row in inbox.json["notifications"])
+    assert unread.json == {"unread_count": 2}
+    assert all("Cordless Drill" not in row["message"] or row["request_id"] == 5
+               for row in inbox.json["notifications"])
 
 
 def test_offer_creation_notifies_request_owner_in_same_transaction(monkeypatch):

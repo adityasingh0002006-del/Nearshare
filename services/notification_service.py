@@ -8,20 +8,33 @@ class NotificationError(Exception):
         self.status_code = status_code
 
 
-def create_notification(cursor, user_id, request_id, message, notification_type):
+def create_notification(
+    cursor, user_id, request_id, message, notification_type,
+    *, dedupe_by_type=False,
+):
     """Insert a deterministic notification once in the caller's transaction.
 
-    The current schema has no source-event key or uniqueness constraint. A
-    locked lookup on the complete event identity makes repeat calls idempotent
-    while the workflow transaction remains open.
+    The current schema has no source-event key or uniqueness constraint. By
+    default the full message is part of the identity for existing workflow
+    events. Locality request broadcasts can deduplicate across message changes
+    using only recipient, request, and type.
     """
-    cursor.execute(
-        """SELECT notification_id
-           FROM dbo.Notifications WITH (UPDLOCK, HOLDLOCK)
-           WHERE user_id = ? AND request_id = ?
-             AND notification_type = ? AND message = ?""",
-        user_id, request_id, notification_type, message,
-    )
+    if dedupe_by_type:
+        cursor.execute(
+            """SELECT notification_id
+               FROM dbo.Notifications WITH (UPDLOCK, HOLDLOCK)
+               WHERE user_id = ? AND request_id = ?
+                 AND notification_type = ?""",
+            user_id, request_id, notification_type,
+        )
+    else:
+        cursor.execute(
+            """SELECT notification_id
+               FROM dbo.Notifications WITH (UPDLOCK, HOLDLOCK)
+               WHERE user_id = ? AND request_id = ?
+                 AND notification_type = ? AND message = ?""",
+            user_id, request_id, notification_type, message,
+        )
     if cursor.fetchone():
         return False
     cursor.execute(
@@ -33,18 +46,13 @@ def create_notification(cursor, user_id, request_id, message, notification_type)
 
 
 def notify_locality_users_of_request(cursor, request_id):
-    """Notify every other active user in the request's exact locality."""
+    """Create one private, idempotent notification per active locality user."""
     notification_type = "MATCHING_REQUEST"
     cursor.execute(
-        """INSERT INTO dbo.Notifications (user_id, request_id, message, notification_type)
-           SELECT DISTINCT recipient.user_id, r.request_id,
-                  CONCAT(N'New nearby request: ', r.item_description,
-                         N' · ', c.category_name,
-                         N' · ', request_locality.locality_name,
-                         N', ', request_locality.city,
-                         N' · ', CONVERT(NVARCHAR(16), r.start_datetime, 120),
-                         N' – ', CONVERT(NVARCHAR(16), r.end_datetime, 120),
-                         N' · Budget up to ₹', CONVERT(NVARCHAR(32), r.max_budget), N'/day.'), ?
+        """SELECT DISTINCT recipient.user_id, r.item_description,
+                  c.category_name, request_locality.locality_name,
+                  request_locality.city, r.start_datetime, r.end_datetime,
+                  r.max_budget
            FROM dbo.Requests AS r
            INNER JOIN dbo.Categories AS c ON c.category_id = r.category_id
            INNER JOIN dbo.Localities AS request_locality
@@ -56,13 +64,20 @@ def notify_locality_users_of_request(cursor, request_id):
            WHERE r.request_id = ?
              AND r.status IN (N'OPEN', N'MATCHED')
              AND recipient_locality.locality_id = request_locality.locality_id
-             AND recipient_locality.city = request_locality.city
-             AND NOT EXISTS
-                 (SELECT 1 FROM dbo.Notifications AS n WITH (UPDLOCK, HOLDLOCK)
-                  WHERE n.user_id = recipient.user_id AND n.request_id = r.request_id
-                    AND n.notification_type = ?)""",
-        notification_type, request_id, notification_type,
+             AND recipient_locality.city = request_locality.city""",
+        request_id,
     )
+    rows = cursor.fetchall()
+    for row in rows:
+        message = (
+            f"Someone nearby is looking for {row[1]} · {row[2]} · "
+            f"{row[3]}, {row[4]} · {row[5]:%Y-%m-%d %H:%M} – "
+            f"{row[6]:%Y-%m-%d %H:%M} · Budget up to ₹{row[7]}/day."
+        )
+        create_notification(
+            cursor, row[0], request_id, message, notification_type,
+            dedupe_by_type=True,
+        )
 
 
 def notify_request_offer_owners(cursor, request_id, notification_type, message):

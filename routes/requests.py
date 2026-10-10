@@ -173,7 +173,11 @@ def create_request():
         )
         existing = cursor.fetchone()
         if existing:
-            conn.rollback()
+            # Retry the idempotent notification fan-out as well. This repairs
+            # an earlier request whose notification write did not complete,
+            # while the service deduplicates already delivered events.
+            notify_locality_users_of_request(cursor, existing[0])
+            conn.commit()
             return jsonify(request=_serialize(existing), already_exists=True), 200
         cursor.execute(
             """INSERT INTO dbo.Requests
