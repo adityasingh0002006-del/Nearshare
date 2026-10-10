@@ -45,6 +45,7 @@ def create_app(test_config=None):
     from routes.bookings import bookings_bp
     from routes.reviews import reviews_bp
     from routes.notifications import notifications_bp
+    from routes.lookups import lookups_bp
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
     app.register_blueprint(items_bp, url_prefix="/api/items")
@@ -53,6 +54,7 @@ def create_app(test_config=None):
     app.register_blueprint(bookings_bp, url_prefix="/api/bookings")
     app.register_blueprint(reviews_bp, url_prefix="/api/reviews")
     app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
+    app.register_blueprint(lookups_bp, url_prefix="/api")
     app.config["MAX_CONTENT_LENGTH"] = (test_config or {}).get(
         "MAX_CONTENT_LENGTH", 5 * 1024 * 1024 + 64 * 1024
     )

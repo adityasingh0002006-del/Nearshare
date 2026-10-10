@@ -130,6 +130,8 @@ def test_create_request_persists_session_owner_and_utc_dates(monkeypatch):
     assert response.status_code == 201
     request_data = response.json["request"]
     assert request_data["requester_id"] == 11
+    assert request_data["category_id"] == 4
+    assert request_data["locality_id"] == 9
     assert request_data["status"] == "OPEN"
     assert request_data["max_budget"] == "125.50"
     assert request_data["start_datetime"] == "2026-11-10T03:30:00"
@@ -200,6 +202,17 @@ def test_missing_reference_is_rejected(monkeypatch):
     response = signed_in_client().post("/api/requests", json=valid_payload())
     assert response.status_code == 400
     assert "category_id" in response.json["error"]
+
+
+def test_missing_locality_reference_is_rejected(monkeypatch):
+    database = make_database()
+    database["localities"].clear()
+    install_database(monkeypatch, database)
+
+    response = signed_in_client().post("/api/requests", json=valid_payload())
+
+    assert response.status_code == 400
+    assert "locality_id" in response.json["error"]
 
 
 def test_non_owner_cannot_update_or_cancel_request(monkeypatch):
