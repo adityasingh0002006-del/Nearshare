@@ -131,12 +131,22 @@ def test_borrower_and_lender_views_have_distinct_offer_actions():
 
 def test_contact_details_are_loaded_from_participant_scoped_booking_endpoint():
     source = APP_JS.read_text(encoding="utf-8")
+    template = (APP_JS.parents[2] / "templates" / "index.html").read_text(encoding="utf-8")
 
     assert "contactAvailable=states.includes(b.status)" in source
     assert ">View Contact Details</button>" in source
     assert "Booking confirmed" in source
     assert "data-contacts=\"${b.booking_id}\"" in source
-    assert "API.get(`/api/bookings/${id}/contacts`)" in source
+    assert "API.get(`/api/bookings/${encodeURIComponent(id)}/contacts`)" in source
     assert "esc(contacts.borrower.email)" in source
     assert "esc(contacts.owner.email)" in source
+    assert "Name: ${esc(contacts.borrower.name)}" in source
+    assert "Phone: ${esc(contacts.owner.phone)}" in source
     assert "Contact details are shared only with the borrower and item owner for this confirmed booking." in source
+    assert "root.addEventListener('click'" in source
+    assert "loadBookingContacts(button)" in source
+    assert "const id=button.dataset.contacts" in source
+    assert "loadBookingContacts(btn.dataset.id)" not in source
+    assert "Unable to load contact details. Please try again." in source
+    assert "role','alert'" in source
+    assert "filename='js/app.js', v='2'" in template
