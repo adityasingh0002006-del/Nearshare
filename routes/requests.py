@@ -237,12 +237,18 @@ def get_request_matches(request_id):
         row = cursor.fetchone()
         if not row:
             return jsonify(error="Request not found"), 404
-        if row[0] != session["user_id"]:
-            return jsonify(error="You do not own this request"), 403
         if row[1] not in {"OPEN", "MATCHED"}:
             return jsonify(error="Only open or matched requests can be matched"), 409
-        matches = find_matches(cursor, request_id)
-        return jsonify(request_id=request_id, matches=matches), 200
+        matches = find_matches(cursor, request_id, session["user_id"])
+        if row[0] != session["user_id"] and not any(m["is_item_owner"] for m in matches):
+            return jsonify(error="You do not own this request"), 403
+        if row[0] != session["user_id"]:
+            matches = [match for match in matches if match["is_item_owner"]]
+        return jsonify(
+            request_id=request_id,
+            is_requester=row[0] == session["user_id"],
+            matches=matches,
+        ), 200
     except Exception:
         current_app.logger.exception("Request matching operation failed")
         return jsonify(error="Matching service unavailable"), 503

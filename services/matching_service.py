@@ -1,7 +1,7 @@
 """Read-only hyperlocal request-to-item matching queries."""
 
 
-def find_matches(cursor, request_id):
+def find_matches(cursor, request_id, viewer_id=None):
     """Return eligible items for one request in a single parameterized query.
 
     A match requires the same category and locality, an available item and an
@@ -11,7 +11,7 @@ def find_matches(cursor, request_id):
     cursor.execute(
         """SELECT i.item_id, i.category_id, c.category_name, i.item_name,
                   i.description, i.item_condition, i.rental_price,
-                  i.security_deposit
+                  i.security_deposit, i.owner_id
            FROM dbo.Requests AS r
            INNER JOIN dbo.Items AS i ON i.category_id = r.category_id
            INNER JOIN dbo.Categories AS c ON c.category_id = i.category_id
@@ -46,6 +46,7 @@ def find_matches(cursor, request_id):
             "condition": row[5],
             "rental_price": str(row[6]),
             "security_deposit": str(row[7]),
+            "is_item_owner": viewer_id is not None and row[8] == viewer_id,
         }
         for row in cursor.fetchall()
     ]

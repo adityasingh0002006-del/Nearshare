@@ -48,7 +48,7 @@ def signed_in_client(user_id=7):
 
 
 def sample_match():
-    return (31, 4, "Tools", "Cordless drill", "18V drill", "GOOD", Decimal("25.00"), Decimal("50.00"))
+    return (31, 4, "Tools", "Cordless drill", "18V drill", "GOOD", Decimal("25.00"), Decimal("50.00"), 200)
 
 
 def install_cursor(monkeypatch, cursor):
@@ -64,6 +64,7 @@ def test_request_owner_receives_matching_item_without_private_owner_data(monkeyp
     assert response.status_code == 200
     assert response.json == {
         "request_id": 12,
+        "is_requester": True,
         "matches": [{
             "item_id": 31,
             "category_id": 4,
@@ -73,6 +74,7 @@ def test_request_owner_receives_matching_item_without_private_owner_data(monkeyp
             "condition": "GOOD",
             "rental_price": "25.00",
             "security_deposit": "50.00",
+            "is_item_owner": False,
         }],
     }
     assert cursor.executed[1][1] == (12,)
@@ -88,7 +90,7 @@ def test_matching_returns_empty_list_when_no_candidates(monkeypatch):
     response = signed_in_client().get("/api/requests/12/matches")
 
     assert response.status_code == 200
-    assert response.json == {"request_id": 12, "matches": []}
+    assert response.json == {"request_id": 12, "is_requester": True, "matches": []}
 
 
 def test_matching_sql_applies_schema_supported_eligibility_filters():
@@ -135,7 +137,19 @@ def test_matching_is_restricted_to_request_owner(monkeypatch):
     response = signed_in_client(user_id=8).get("/api/requests/12/matches")
 
     assert response.status_code == 403
-    assert len(cursor.executed) == 1
+    assert len(cursor.executed) == 2
+
+
+def test_matched_item_owner_can_view_their_match_and_make_offer(monkeypatch):
+    cursor = MatchingCursor(request_owner=7, matches=[sample_match()])
+    install_cursor(monkeypatch, cursor)
+
+    response = signed_in_client(user_id=200).get("/api/requests/12/matches")
+
+    assert response.status_code == 200
+    assert response.json["is_requester"] is False
+    assert len(response.json["matches"]) == 1
+    assert response.json["matches"][0]["is_item_owner"] is True
 
 
 def test_matching_rejects_unsupported_filters(monkeypatch):

@@ -276,7 +276,36 @@ def test_request_owner_cannot_offer_on_own_request_and_item_owner_is_enforced(mo
         "/api/requests/1/offers", json=offer_payload(),
     )
     assert self_dealing.status_code == 403
+    assert self_dealing.json == {"error": "Only the item owner can make an offer"}
     assert item_not_owned.status_code == 403
+    assert item_not_owned.json == {"error": "Only the item owner can make an offer"}
+    assert not database["offers"]
+
+
+def test_user_who_owns_neither_request_nor_item_is_forbidden(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+
+    response = signed_in_client(user_id=300).post(
+        "/api/requests/1/offers", json=offer_payload(),
+    )
+
+    assert response.status_code == 403
+    assert response.json == {"error": "Only the item owner can make an offer"}
+    assert not database["offers"]
+
+
+def test_owner_cannot_offer_an_item_that_does_not_match_request(monkeypatch):
+    database = make_database()
+    database["requests"][1]["category_id"] = 6
+    install_database(monkeypatch, database)
+
+    response = signed_in_client(user_id=200).post(
+        "/api/requests/1/offers", json=offer_payload(),
+    )
+
+    assert response.status_code == 409
+    assert "match" in response.json["error"] or "category" in response.json["error"]
     assert not database["offers"]
 
 

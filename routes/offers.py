@@ -131,8 +131,6 @@ def create_offer(request_id):
         target_request = cursor.fetchone()
         if not target_request:
             return _rollback_response(conn, "Request not found", 404)
-        if target_request[0] == session["user_id"]:
-            return _rollback_response(conn, "You cannot offer on your own request", 403)
         if target_request[4] not in {"OPEN", "MATCHED"}:
             return _rollback_response(conn, "Request is not eligible for offers", 409)
 
@@ -149,7 +147,9 @@ def create_offer(request_id):
         if not item:
             return _rollback_response(conn, "Item not found", 404)
         if item[0] != session["user_id"]:
-            return _rollback_response(conn, "You do not own this item", 403)
+            return _rollback_response(conn, "Only the item owner can make an offer", 403)
+        if item[0] == target_request[0]:
+            return _rollback_response(conn, "Request and item are not a valid match", 409)
         if not item[5]:
             return _rollback_response(conn, "Item owner is inactive", 409)
         if item[1] != target_request[1] or item[4] != target_request[2]:
