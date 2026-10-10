@@ -46,6 +46,14 @@ def _serialize(row):
     }
 
 
+def _offer_for_viewer(row, viewer_id, requester_id):
+    """Serialize an offer with actions appropriate to this participant."""
+    offer = _serialize(row[:10])
+    offer["can_decide"] = requester_id == viewer_id and row[8] == "PENDING"
+    offer["can_withdraw"] = row[3] == viewer_id and row[8] == "PENDING"
+    return offer
+
+
 def _positive_int(value, field):
     if isinstance(value, bool):
         raise ValueError(f"{field} must be a positive integer")
@@ -217,17 +225,23 @@ def create_offer(request_id):
 @offers_bp.get("/offers")
 @login_required
 def list_my_offers():
-    """List only offers created by the signed-in user."""
+    """List offers the signed-in user created or received as a requester."""
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
-            f"""SELECT {_OFFER_SELECT} FROM dbo.Offers
-                WHERE owner_id = ? ORDER BY created_at DESC, offer_id DESC""",
-            session["user_id"],
+            f"""SELECT {_OFFER_SELECT_QUALIFIED}, r.requester_id
+                FROM dbo.Offers AS o
+                INNER JOIN dbo.Requests AS r ON r.request_id = o.request_id
+                WHERE o.owner_id = ? OR r.requester_id = ?
+                ORDER BY o.created_at DESC, o.offer_id DESC""",
+            session["user_id"], session["user_id"],
         )
-        return jsonify(offers=[_serialize(row) for row in cursor.fetchall()]), 200
+        return jsonify(offers=[
+            _offer_for_viewer(row, session["user_id"], row[10])
+            for row in cursor.fetchall()
+        ]), 200
     except Exception:
         return _db_error()
     finally:
@@ -250,12 +264,14 @@ def list_request_offers(request_id):
         if not row:
             return jsonify(error="Request not found"), 404
         if row[0] == session["user_id"]:
+            can_decide = True
             cursor.execute(
                 f"""SELECT {_OFFER_SELECT} FROM dbo.Offers
                     WHERE request_id = ? ORDER BY created_at DESC, offer_id DESC""",
                 request_id,
             )
         else:
+            can_decide = False
             cursor.execute(
                 f"""SELECT {_OFFER_SELECT} FROM dbo.Offers
                     WHERE request_id = ? AND owner_id = ?
@@ -265,8 +281,14 @@ def list_request_offers(request_id):
             own_offers = cursor.fetchall()
             if not own_offers:
                 return jsonify(error="You are not a participant in this request's offers"), 403
-            return jsonify(offers=[_serialize(offer) for offer in own_offers]), 200
-        return jsonify(offers=[_serialize(offer) for offer in cursor.fetchall()]), 200
+            return jsonify(offers=[
+                _offer_for_viewer(offer, session["user_id"], row[0])
+                for offer in own_offers
+            ], can_decide=False), 200
+        return jsonify(offers=[
+            _offer_for_viewer(offer, session["user_id"], row[0])
+            for offer in cursor.fetchall()
+        ], can_decide=can_decide), 200
     except Exception:
         return _db_error()
     finally:

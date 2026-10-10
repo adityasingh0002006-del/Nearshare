@@ -20,6 +20,34 @@ class FakeCursor:
             self.result = (1,) if params[0] in self.database["categories"] else None
         elif "SELECT 1 FROM dbo.Localities" in query:
             self.result = (1,) if params[0] in self.database["localities"] else None
+        elif "FROM dbo.Requests WITH (UPDLOCK, HOLDLOCK)" in query and "item_description = ?" in query:
+            requester_id, category_id, description, locality_id, start, end, budget = params
+            self.result = next((row for row in self.database["requests"].values()
+                                if row[1:8] == (requester_id, category_id, description,
+                                                locality_id, start, end, budget)
+                                and row[8] in {"OPEN", "MATCHED"}), None)
+        elif "SELECT owner_id FROM dbo.Items WHERE item_id" in query:
+            item = self.database["items"].get(params[0])
+            self.result = (item["owner_id"],) if item else None
+        elif "SELECT TOP (1) r.request_id" in query:
+            item_id, requester_id = params
+            item = self.database["items"].get(item_id)
+            candidates = []
+            for row in self.database["requests"].values():
+                if not item or not item.get("is_available") or not item.get("is_active"):
+                    continue
+                if (row[1] == requester_id and row[1] != item["owner_id"]
+                        and row[2] == item["category_id"]
+                        and row[4] == item["locality_id"]
+                        and row[8] in {"OPEN", "MATCHED"}
+                        and item["rental_price"] <= row[7]
+                        and not any(b[0] == item_id and b[3] != "CANCELLED"
+                                    and b[1] < row[6] and b[2] > row[5]
+                                    for b in self.database["bookings"])
+                ):
+                    candidates.append(row)
+            candidates.sort(key=lambda row: (row[5], -row[0]), reverse=False)
+            self.result = (candidates[0][0],) if candidates else None
         elif "INSERT INTO dbo.Requests" in query:
             request_id = self.database["next_id"]
             self.database["next_id"] += 1
@@ -86,7 +114,10 @@ class FakeConnection:
 
 
 def make_database():
-    return {"requests": {}, "categories": {4}, "localities": {9}, "next_id": 1}
+    return {
+        "requests": {}, "categories": {4}, "localities": {9}, "items": {},
+        "bookings": [], "next_id": 1,
+    }
 
 
 def signed_in_client(user_id=11):
@@ -136,6 +167,121 @@ def test_create_request_persists_session_owner_and_utc_dates(monkeypatch):
     assert request_data["max_budget"] == "125.50"
     assert request_data["start_datetime"] == "2026-11-10T03:30:00"
     assert database["requests"][1][1] == 11
+
+
+def test_repeated_identical_request_returns_existing_active_request(monkeypatch):
+    database = make_database()
+    connections = install_database(monkeypatch, database)
+    client = signed_in_client(user_id=11)
+
+    first = client.post("/api/requests", json=valid_payload())
+    repeated = client.post("/api/requests", json=valid_payload())
+
+    assert first.status_code == 201
+    assert repeated.status_code == 200
+    assert repeated.json["already_exists"] is True
+    assert repeated.json["request"]["request_id"] == first.json["request"]["request_id"]
+    assert len(database["requests"]) == 1
+    assert connections[-1].rollbacks == 1
+
+
+def test_requests_for_different_dates_remain_distinct(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+    client = signed_in_client(user_id=11)
+    first = client.post("/api/requests", json=valid_payload())
+    later_dates = valid_payload()
+    later_dates["start_datetime"] = "2026-11-20T09:00:00+05:30"
+    later_dates["end_datetime"] = "2026-11-22T18:00:00+05:30"
+
+    second = client.post("/api/requests", json=later_dates)
+
+    assert first.status_code == second.status_code == 201
+    assert first.json["request"]["request_id"] != second.json["request"]["request_id"]
+    assert len(database["requests"]) == 2
+
+
+def test_matching_item_endpoint_selects_only_an_eligible_owned_request(monkeypatch):
+    database = make_database()
+    database["items"][20] = {
+        "owner_id": 200, "category_id": 4, "locality_id": 9,
+        "is_available": True, "is_active": True, "rental_price": 40,
+    }
+    install_database(monkeypatch, database)
+    client = signed_in_client(user_id=11)
+
+    unrelated = valid_payload()
+    unrelated["locality_id"] = 9
+    client.post("/api/requests", json=unrelated)
+    database["requests"][1] = (*database["requests"][1][:2], 5, *database["requests"][1][3:])
+    suitable = valid_payload()
+    suitable["item_description"] = "A drill for this weekend"
+    created = client.post("/api/requests", json=suitable)
+
+    response = client.get("/api/requests/matching-item/20")
+
+    assert response.status_code == 200
+    assert response.json == {
+        "request_id": created.json["request"]["request_id"], "owns_item": False,
+    }
+
+
+def test_matching_item_endpoint_prefers_the_soonest_matching_request(monkeypatch):
+    database = make_database()
+    database["items"][20] = {
+        "owner_id": 200, "category_id": 4, "locality_id": 9,
+        "is_available": True, "is_active": True, "rental_price": 40,
+    }
+    install_database(monkeypatch, database)
+    client = signed_in_client(user_id=11)
+    farther = valid_payload()
+    farther["start_datetime"] = "2026-11-20T09:00:00+05:30"
+    farther["end_datetime"] = "2026-11-22T18:00:00+05:30"
+    client.post("/api/requests", json=farther)
+    sooner = valid_payload()
+    sooner["start_datetime"] = "2026-11-05T09:00:00+05:30"
+    sooner["end_datetime"] = "2026-11-07T18:00:00+05:30"
+    selected = client.post("/api/requests", json=sooner)
+
+    response = client.get("/api/requests/matching-item/20")
+
+    assert response.json["request_id"] == selected.json["request"]["request_id"]
+
+
+def test_matching_item_endpoint_respects_item_availability_budget_and_booking_dates(monkeypatch):
+    database = make_database()
+    database["items"][20] = {
+        "owner_id": 200, "category_id": 4, "locality_id": 9,
+        "is_available": True, "is_active": True, "rental_price": 40,
+    }
+    install_database(monkeypatch, database)
+    client = signed_in_client(user_id=11)
+    created = client.post("/api/requests", json=valid_payload())
+    request_id = created.json["request"]["request_id"]
+
+    assert client.get("/api/requests/matching-item/20").json["request_id"] == request_id
+    database["items"][20]["rental_price"] = 200
+    assert client.get("/api/requests/matching-item/20").json["request_id"] is None
+    database["items"][20]["rental_price"] = 40
+    database["items"][20]["is_available"] = False
+    assert client.get("/api/requests/matching-item/20").json["request_id"] is None
+    database["items"][20]["is_available"] = True
+    database["bookings"].append((20, database["requests"][request_id][5],
+                                  database["requests"][request_id][6], "BOOKED"))
+    assert client.get("/api/requests/matching-item/20").json["request_id"] is None
+
+
+def test_matching_item_endpoint_blocks_self_borrow_and_requires_authentication(monkeypatch):
+    database = make_database()
+    database["items"][20] = {"owner_id": 11}
+    install_database(monkeypatch, database)
+
+    owner = signed_in_client(user_id=11).get("/api/requests/matching-item/20")
+    anonymous = create_app({"TESTING": True}).test_client().get("/api/requests/matching-item/20")
+
+    assert owner.status_code == 200
+    assert owner.json == {"request_id": None, "owns_item": True}
+    assert anonymous.status_code == 401
 
 
 def test_list_and_detail_requests_are_authenticated_and_readable(monkeypatch):

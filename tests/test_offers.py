@@ -60,6 +60,14 @@ class FakeCursor:
             target = self.database["requests"].get(params[0])
             if target:
                 self.result = (target["requester_id"],)
+        elif "OR r.requester_id = ?" in query:
+            viewer_id = params[0]
+            self.results = [
+                (*offer, self.database["requests"][offer[1]]["requester_id"])
+                for offer in self.database["offers"]
+                if offer[3] == viewer_id
+                or self.database["requests"][offer[1]]["requester_id"] == viewer_id
+            ]
         elif "FROM dbo.Offers AS o" in query and "INNER JOIN dbo.Requests" in query:
             offer = self._offer(params[0])
             if offer:
@@ -335,9 +343,28 @@ def test_request_owner_and_offer_creator_have_scoped_offer_lists(monkeypatch):
     unrelated = signed_in_client(user_id=300).get("/api/requests/1/offers")
 
     assert len(owner_list.json["offers"]) == 2
+    assert owner_list.json["can_decide"] is True
     assert [offer["offer_id"] for offer in creator_list.json["offers"]] == [first["offer_id"]]
+    assert creator_list.json["can_decide"] is False
+    assert creator_list.json["offers"][0]["can_withdraw"] is True
+    assert owner_list.json["offers"][0]["can_decide"] is True
     assert [offer["offer_id"] for offer in own_list.json["offers"]] == [first["offer_id"]]
     assert unrelated.status_code == 403
+
+
+def test_global_offers_page_lists_received_offers_with_borrower_actions(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+    create_test_offer(signed_in_client(user_id=200), database)
+
+    received = signed_in_client(user_id=100).get("/api/offers")
+    created = signed_in_client(user_id=200).get("/api/offers")
+
+    assert len(received.json["offers"]) == 1
+    assert received.json["offers"][0]["can_decide"] is True
+    assert received.json["offers"][0]["can_withdraw"] is False
+    assert created.json["offers"][0]["can_decide"] is False
+    assert created.json["offers"][0]["can_withdraw"] is True
 
 
 def test_offer_detail_is_limited_to_request_owner_and_offer_creator(monkeypatch):

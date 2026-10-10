@@ -36,3 +36,25 @@ def test_request_form_uses_lookup_labels_validates_selections_and_submits_numeri
     assert "localityNames.get(r.locality_id)" in source
     assert "Category lookup API is not available" not in source
     assert "Enter the locality ID configured for your area." not in source
+
+
+def test_item_borrow_action_uses_a_server_resolved_matching_request():
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "API.get(`/api/requests/matching-item/${id}`)" in source
+    assert "href=\"#matches/${borrowInfo.request_id}\"" in source
+    assert "You own this item." in source
+    assert "Could not check your requests. Please reload and try again." in source
+
+
+def test_borrower_and_lender_views_have_distinct_offer_actions():
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "Waiting for the item owner to make an offer." in source
+    assert "item.is_item_owner" in source
+    assert "Only the item owner can make an offer." in source
+    assert "(requestId?data.can_decide:o.can_decide)&&o.status==='PENDING'" in source
+    assert "o.can_withdraw&&o.status==='PENDING'" in source
+    assert "API.get('/api/offers')" in source
+    assert "View matching items" in source
+    assert "View offer" in source

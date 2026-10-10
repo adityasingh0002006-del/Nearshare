@@ -151,6 +151,25 @@ def create_request():
         reference_error = _validate_references(cursor, values)
         if reference_error:
             return jsonify(error=reference_error), 400
+        # Treat an exact repeat of an active borrowing need as the same
+        # request. HOLDLOCK keeps simultaneous double submissions from
+        # creating two rows for the same user and request details.
+        cursor.execute(
+            f"""SELECT TOP (1) {_REQUEST_COLUMNS}
+                FROM dbo.Requests WITH (UPDLOCK, HOLDLOCK)
+                WHERE requester_id = ? AND category_id = ?
+                  AND item_description = ? AND locality_id = ?
+                  AND start_datetime = ? AND end_datetime = ? AND max_budget = ?
+                  AND status IN (N'OPEN', N'MATCHED')
+                ORDER BY created_at DESC, request_id DESC""",
+            session["user_id"], values["category_id"], values["item_description"],
+            values["locality_id"], values["start_datetime"], values["end_datetime"],
+            values["max_budget"],
+        )
+        existing = cursor.fetchone()
+        if existing:
+            conn.rollback()
+            return jsonify(request=_serialize(existing), already_exists=True), 200
         cursor.execute(
             """INSERT INTO dbo.Requests
                (requester_id, category_id, item_description, locality_id,
@@ -170,6 +189,68 @@ def create_request():
     except Exception:
         if conn:
             conn.rollback()
+        return _db_error()
+    finally:
+        if conn:
+            conn.close()
+
+
+@requests_bp.get("/matching-item/<int:item_id>")
+@login_required
+def find_matching_request_for_item(item_id):
+    """Return the best active request for this user that matches an item.
+
+    Eligible requests use the normal matching rules: different requester and
+    item owner, same category and locality, active request, available item,
+    rental price within budget, and no overlapping active booking. When more
+    than one request qualifies, the soonest upcoming start date wins; ties use
+    newest creation time and then the highest request id.
+    """
+    if item_id <= 0:
+        return jsonify(error="item_id must be a positive integer"), 400
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT owner_id FROM dbo.Items WHERE item_id = ?",
+            item_id,
+        )
+        item = cursor.fetchone()
+        if not item:
+            return jsonify(error="Item not found"), 404
+        if item[0] == session["user_id"]:
+            return jsonify(request_id=None, owns_item=True), 200
+
+        cursor.execute(
+            """SELECT TOP (1) r.request_id
+               FROM dbo.Items AS i
+               INNER JOIN dbo.Users AS item_owner
+                   ON item_owner.user_id = i.owner_id
+               INNER JOIN dbo.Requests AS r
+                   ON r.category_id = i.category_id
+                  AND r.locality_id = item_owner.locality_id
+               WHERE i.item_id = ?
+                 AND r.requester_id = ?
+                 AND r.requester_id <> i.owner_id
+                 AND r.status IN (N'OPEN', N'MATCHED')
+                 AND i.is_available = 1
+                 AND item_owner.is_active = 1
+                 AND i.rental_price <= r.max_budget
+                 AND NOT EXISTS
+                     (SELECT 1
+                      FROM dbo.Bookings AS b
+                      INNER JOIN dbo.Offers AS o ON o.offer_id = b.offer_id
+                      WHERE o.item_id = i.item_id
+                        AND b.status <> N'CANCELLED'
+                        AND b.start_datetime < r.end_datetime
+                        AND b.end_datetime > r.start_datetime)
+               ORDER BY r.start_datetime, r.created_at DESC, r.request_id DESC""",
+            item_id, session["user_id"],
+        )
+        match = cursor.fetchone()
+        return jsonify(request_id=match[0] if match else None, owns_item=False), 200
+    except Exception:
         return _db_error()
     finally:
         if conn:
