@@ -79,9 +79,18 @@ def test_item_borrow_action_uses_a_server_resolved_matching_request():
     source = APP_JS.read_text(encoding="utf-8")
 
     assert "API.get(`/api/requests/matching-item/${id}`)" in source
-    assert "href=\"#matches/${borrowInfo.request_id}\"" in source
+    assert "href=\"#matches/${info.request_id}\"" in source
     assert "You own this item." in source
     assert "Could not check your requests. Please reload and try again." in source
+
+
+def test_item_owner_can_discover_matching_requests_from_item_detail():
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "API.get(`/api/items/${id}/matching-requests`)" in source
+    assert "${owner?ownerMatchingRequests(ownerRequests):''}" in source
+    assert "No matching requests yet." in source
+    assert "href=\"#matches/${r.request_id}\">View match" in source
 
 
 def test_borrower_and_lender_views_have_distinct_offer_actions():

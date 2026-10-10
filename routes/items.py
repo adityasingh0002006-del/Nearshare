@@ -11,6 +11,7 @@ from PIL import Image, UnidentifiedImageError
 
 from database.connection import get_connection
 from middleware.auth import login_required
+from services.matching_service import find_matching_requests
 from services.storage_service import delete_image, download_image, upload_image
 
 
@@ -156,6 +157,31 @@ def get_item(item_id):
         if not row:
             return jsonify(error="Item not found"), 404
         return jsonify(item=_serialize(row)), 200
+    except Exception:
+        return _db_error()
+    finally:
+        if conn:
+            conn.close()
+
+
+@items_bp.get("/<int:item_id>/matching-requests")
+@login_required
+def get_item_matching_requests(item_id):
+    """List only privacy-safe requests matching an item owned by the viewer."""
+    if item_id <= 0:
+        return jsonify(error="item_id must be a positive integer"), 400
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT owner_id FROM dbo.Items WHERE item_id = ?", item_id)
+        item = cursor.fetchone()
+        if not item:
+            return jsonify(error="Item not found"), 404
+        if item[0] != session["user_id"]:
+            return jsonify(error="You do not own this item"), 403
+        matching_requests = find_matching_requests(cursor, item_id)
+        return jsonify(item_id=item_id, requests=matching_requests), 200
     except Exception:
         return _db_error()
     finally:
