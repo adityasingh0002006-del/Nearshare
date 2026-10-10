@@ -168,6 +168,15 @@ def create_offer(request_id):
             return _rollback_response(conn, "Item and offer price must fit the request budget", 409)
 
         cursor.execute(
+            """SELECT response_status FROM dbo.RequestResponses WITH (UPDLOCK, HOLDLOCK)
+               WHERE request_id = ? AND user_id = ?""",
+            request_id, session["user_id"],
+        )
+        response = cursor.fetchone()
+        if response and response[0] == "IGNORED":
+            return _rollback_response(conn, "You ignored this request", 409)
+
+        cursor.execute(
             """SELECT 1
                FROM dbo.Bookings AS b WITH (UPDLOCK, HOLDLOCK)
                INNER JOIN dbo.Offers AS booked_offer WITH (UPDLOCK, HOLDLOCK)
@@ -206,6 +215,19 @@ def create_offer(request_id):
             values["offered_price"], values["security_deposit"], values["message"],
         )
         row = cursor.fetchone()
+        if response and response[0] == "INTERESTED":
+            cursor.execute(
+                """UPDATE dbo.RequestResponses SET response_status = N'OFFERED',
+                       updated_at = SYSUTCDATETIME()
+                   WHERE request_id = ? AND user_id = ? AND response_status = N'INTERESTED'""",
+                request_id, session["user_id"],
+            )
+        elif not response:
+            cursor.execute(
+                """INSERT INTO dbo.RequestResponses (request_id, user_id, response_status)
+                   VALUES (?, ?, N'OFFERED')""",
+                request_id, session["user_id"],
+            )
         create_notification(
             cursor, target_request[0], request_id,
             f"A new offer ({row[0]}) was submitted on your request.",
@@ -317,7 +339,30 @@ def get_offer(offer_id):
             return jsonify(error="Offer not found"), 404
         if session["user_id"] not in {row[3], row[10]}:
             return jsonify(error="You are not a participant in this offer"), 403
-        return jsonify(offer=_serialize(row[:10])), 200
+        cursor.execute(
+            """SELECT owner.full_name, item.item_name, category.category_name,
+                      request.start_datetime, request.end_datetime,
+                      (SELECT TOP (1) N'/api/items/images/' + CONVERT(NVARCHAR(20), image.image_id)
+                       FROM dbo.ItemImages AS image WHERE image.item_id = item.item_id
+                       ORDER BY image.image_id)
+               FROM dbo.Items AS item
+               INNER JOIN dbo.Users AS owner ON owner.user_id = item.owner_id
+               INNER JOIN dbo.Categories AS category ON category.category_id = item.category_id
+               INNER JOIN dbo.Requests AS request ON request.request_id = ?
+               WHERE item.item_id = ?""",
+            row[1], row[2],
+        )
+        details = cursor.fetchone()
+        offer = _offer_for_viewer(row[:10], session["user_id"], row[10])
+        if details:
+            offer.update({
+                "owner_name": details[0], "item_name": details[1],
+                "category_name": details[2],
+                "start_datetime": details[3].isoformat() if details[3] else None,
+                "end_datetime": details[4].isoformat() if details[4] else None,
+                "image_url": details[5],
+            })
+        return jsonify(offer=offer), 200
     except Exception:
         return _db_error()
     finally:

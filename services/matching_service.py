@@ -99,11 +99,16 @@ def find_nearby_requests(cursor, user_id):
            INNER JOIN dbo.Categories AS c ON c.category_id = r.category_id
            INNER JOIN dbo.Localities AS request_locality
                ON request_locality.locality_id = r.locality_id
+           LEFT JOIN dbo.RequestResponses AS viewer_response
+               ON viewer_response.request_id = r.request_id
+              AND viewer_response.user_id = viewer.user_id
            WHERE viewer.user_id = ?
              AND viewer.is_active = 1
              AND r.status IN (N'OPEN', N'MATCHED')
              AND request_locality.locality_id = viewer_locality.locality_id
              AND request_locality.city = viewer_locality.city
+             AND (viewer_response.response_status IS NULL
+                  OR viewer_response.response_status <> N'IGNORED')
            ORDER BY r.start_datetime, r.request_id""",
         user_id,
     )

@@ -18,6 +18,9 @@ from services.notification_service import (
     notify_locality_users_of_request,
     notify_request_offer_owners,
 )
+from services.request_response_service import (
+    RequestResponseError, get_request_response, set_request_response,
+)
 
 
 requests_bp = Blueprint("requests", __name__)
@@ -260,6 +263,56 @@ def nearby_requests():
             )
         return jsonify(requests=nearby), 200
     except Exception:
+        return _db_error()
+    finally:
+        if conn:
+            conn.close()
+
+
+@requests_bp.get("/<int:request_id>/response")
+@login_required
+def request_response_details(request_id):
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        details = get_request_response(cursor, request_id, session["user_id"])
+        has_item = False
+        if details["response_status"] != "IGNORED":
+            has_item = request_id in find_owner_matching_request_ids(cursor, session["user_id"])
+        details["has_matching_item"] = has_item
+        return jsonify(request=details), 200
+    except RequestResponseError as exc:
+        return jsonify(error=str(exc)), exc.status_code
+    except Exception:
+        return _db_error()
+    finally:
+        if conn:
+            conn.close()
+
+
+@requests_bp.post("/<int:request_id>/response")
+@login_required
+def respond_to_request(request_id):
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or set(payload) != {"response_status"}:
+        return jsonify(error="response_status is required"), 400
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        status = set_request_response(
+            cursor, request_id, session["user_id"], payload["response_status"],
+        )
+        conn.commit()
+        return jsonify(request_id=request_id, response_status=status), 200
+    except RequestResponseError as exc:
+        if conn:
+            conn.rollback()
+        return jsonify(error=str(exc)), exc.status_code
+    except Exception:
+        if conn:
+            conn.rollback()
         return _db_error()
     finally:
         if conn:

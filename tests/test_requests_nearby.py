@@ -26,6 +26,7 @@ class NearbyCursor:
             "active_owner": True,
             "within_budget": True,
             "no_conflicting_booking": True,
+            "not_ignored": True,
         }
         self.candidate.update(candidate or {})
         self.query = None
@@ -42,7 +43,7 @@ class NearbyCursor:
         if self.feed_query == self.query:
             return [MATCHING_REQUEST] if all(
                 self.candidate[key] for key in
-                ("active_request", "different_requester", "same_city", "same_locality", "viewer_active")
+                ("active_request", "different_requester", "same_city", "same_locality", "viewer_active", "not_ignored")
             ) else []
         return [(41,)] if all(self.candidate[key] for key in (
             "active_request", "different_requester", "same_city", "same_locality",
@@ -91,6 +92,18 @@ def test_local_user_can_retrieve_safe_requests_even_without_matching_item(monkey
     assert "dbo.Items" not in cursor.query
     assert "request_locality.locality_id = viewer_locality.locality_id" in cursor.query
     assert "request_locality.city = viewer_locality.city" in cursor.query
+    assert "viewer_response.response_status <> N'IGNORED'" in cursor.query
+
+
+def test_ignored_request_is_hidden_only_for_that_viewer(monkeypatch):
+    cursor = NearbyCursor(candidate={"not_ignored": False})
+    install_cursor(monkeypatch, cursor)
+
+    response = signed_in_client(user_id=20).get("/api/requests/nearby")
+
+    assert response.status_code == 200
+    assert response.json == {"requests": []}
+    assert "viewer_response.user_id = viewer.user_id" in cursor.feed_query
 
 
 def test_owner_feed_marks_only_requests_with_a_fully_eligible_item(monkeypatch):

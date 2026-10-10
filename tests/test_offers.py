@@ -33,6 +33,13 @@ class FakeCursor:
                     item["owner_id"], item["category_id"], item["is_available"],
                     item["rental_price"], item["locality_id"], item["is_active"],
                 )
+        elif "SELECT response_status FROM dbo.RequestResponses" in query:
+            status = self.database["responses"].get((params[0], params[1]))
+            self.result = (status,) if status else None
+        elif "INSERT INTO dbo.RequestResponses" in query:
+            self.database["responses"][(params[0], params[1])] = params[2] if len(params) > 2 else "OFFERED"
+        elif "UPDATE dbo.RequestResponses SET response_status" in query:
+            self.database["responses"][(params[1], params[2])] = "OFFERED"
         elif "WHERE booked_offer.item_id = ?" in query:
             item_id, request_end, request_start = params
             offer_ids = {offer[0] for offer in self.database["offers"] if offer[2] == item_id}
@@ -72,6 +79,14 @@ class FakeCursor:
             offer = self._offer(params[0])
             if offer:
                 self.result = (*offer, self.database["requests"][offer[1]]["requester_id"])
+        elif "FROM dbo.Items AS item" in query and "owner.full_name" in query:
+            item = self.database["items"].get(params[1])
+            if item:
+                self.result = (
+                    item.get("owner_name", "Surya"), item.get("item_name", "Cordless Drill"),
+                    "Tools", self.database["requests"][params[0]]["start"],
+                    self.database["requests"][params[0]]["end"], item.get("image_url"),
+                )
         elif "SELECT o.owner_id, o.status" in query:
             offer = self._offer(params[0])
             if offer:
@@ -144,10 +159,13 @@ def make_database():
                 "owner_id": 200, "category_id": 5, "locality_id": 9,
                 "is_active": True, "is_available": True,
                 "rental_price": Decimal("40.00"),
+            "owner_name": "Surya", "item_name": "Cordless Drill",
+            "image_url": "/api/items/images/8",
             },
         },
         "offers": [],
         "bookings": [],
+        "responses": {},
         "next_offer_id": 1,
     }
 
@@ -205,6 +223,19 @@ def test_create_offer_uses_session_owner_and_schema_supported_fields(monkeypatch
     assert offer["security_deposit"] == "10.00"
     assert offer["message"] == "Can lend this weekend"
     assert connections[-1].commits == 1
+    assert database["responses"][(1, 200)] == "OFFERED"
+
+
+def test_user_who_ignored_request_cannot_make_an_offer(monkeypatch):
+    database = make_database()
+    database["responses"][(1, 200)] = "IGNORED"
+    install_database(monkeypatch, database)
+
+    response = signed_in_client().post("/api/requests/1/offers", json=offer_payload())
+
+    assert response.status_code == 409
+    assert response.json == {"error": "You ignored this request"}
+    assert database["offers"] == []
 
 
 @pytest.mark.parametrize(
@@ -372,8 +403,16 @@ def test_offer_detail_is_limited_to_request_owner_and_offer_creator(monkeypatch)
     install_database(monkeypatch, database)
     offer = create_test_offer(signed_in_client(), database)
 
-    assert signed_in_client(user_id=100).get(f"/api/offers/{offer['offer_id']}").status_code == 200
-    assert signed_in_client(user_id=200).get(f"/api/offers/{offer['offer_id']}").status_code == 200
+    detail = signed_in_client(user_id=100).get(f"/api/offers/{offer['offer_id']}")
+    assert detail.status_code == 200
+    assert detail.json["offer"]["owner_name"] == "Surya"
+    assert detail.json["offer"]["item_name"] == "Cordless Drill"
+    assert detail.json["offer"]["category_name"] == "Tools"
+    assert detail.json["offer"]["image_url"] == "/api/items/images/8"
+    assert detail.json["offer"]["can_decide"] is True
+    owner_detail = signed_in_client(user_id=200).get(f"/api/offers/{offer['offer_id']}")
+    assert owner_detail.status_code == 200
+    assert owner_detail.json["offer"]["can_decide"] is False
     assert signed_in_client(user_id=300).get(f"/api/offers/{offer['offer_id']}").status_code == 403
     assert signed_in_client().get("/api/offers/999").status_code == 404
 

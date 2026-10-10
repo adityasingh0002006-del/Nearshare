@@ -101,9 +101,13 @@ def test_owner_request_feed_navigation_privacy_and_notification_link():
     assert "No matching requests near you yet." in source
     assert "Exact private addresses and requester contact details are never shown." in source
     assert "whether or not you have a matching item listed" in source
-    assert "r.has_matching_item?" in source
-    assert "href=\"#matches/${r.request_id}\">View Request" in source
-    assert "href=\"#requests-nearby\">View matching requests" in source
+    assert 'href="#nearby-request/${r.request_id}">Respond' in source
+    assert 'href="#nearby-request/${n.request_id}">View request' in source
+    assert 'href="#my-items">View My Items' not in source
+    assert "async function nearbyRequestDetail(id)" in source
+    assert "response_status:'INTERESTED'" in source
+    assert "response_status:'IGNORED'" in source
+    assert "`item-new?respond_to=${id}`" in source
 
 
 def test_borrower_and_lender_views_have_distinct_offer_actions():
