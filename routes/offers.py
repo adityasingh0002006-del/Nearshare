@@ -144,12 +144,17 @@ def create_offer(request_id):
 
         cursor.execute(
             """SELECT i.owner_id, i.category_id, i.is_available, i.rental_price,
-                      u.locality_id, u.is_active
+                      u.locality_id, u.is_active, i.item_name, u.full_name,
+                      item_locality.city, request_locality.city
                FROM dbo.Items AS i WITH (UPDLOCK, HOLDLOCK)
                INNER JOIN dbo.Users AS u WITH (UPDLOCK, HOLDLOCK)
                    ON u.user_id = i.owner_id
+               INNER JOIN dbo.Localities AS item_locality
+                   ON item_locality.locality_id = u.locality_id
+               INNER JOIN dbo.Localities AS request_locality
+                   ON request_locality.locality_id = ?
                WHERE i.item_id = ?""",
-            values["item_id"],
+            target_request[2], values["item_id"],
         )
         item = cursor.fetchone()
         if not item:
@@ -160,7 +165,8 @@ def create_offer(request_id):
             return _rollback_response(conn, "Request and item are not a valid match", 409)
         if not item[5]:
             return _rollback_response(conn, "Item owner is inactive", 409)
-        if item[1] != target_request[1] or item[4] != target_request[2]:
+        if (item[1] != target_request[1] or item[4] != target_request[2]
+                or item[8] != item[9]):
             return _rollback_response(conn, "Item category and locality must match the request", 409)
         if not item[2]:
             return _rollback_response(conn, "Item is unavailable", 409)
@@ -230,7 +236,7 @@ def create_offer(request_id):
             )
         create_notification(
             cursor, target_request[0], request_id,
-            f"A new offer ({row[0]}) was submitted on your request.",
+            f"{item[7]} offered to {'rent' if values['offer_type'] == 'RENTAL' else 'lend'} {item[6]} for your request.",
             "OFFER_RECEIVED",
         )
         conn.commit()

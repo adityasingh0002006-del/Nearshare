@@ -283,7 +283,9 @@ def test_accept_offer_creates_booking_and_updates_related_states(monkeypatch):
     assert database["requests"][1]["status"] == "BOOKED"
     assert database["offers"][1][8] == "REJECTED"
     assert len(database["bookings"]) == 1
-    assert len(database["notifications"]) == 2
+    assert len(database["notifications"]) == 3
+    assert any(row[0] == 100 and row[3] == "BOOKING_CONFIRMED"
+               for row in database["notifications"])
     assert len(database["audits"]) == 1
     assert connections[-1].commits == 1
 

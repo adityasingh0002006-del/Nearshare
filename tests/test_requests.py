@@ -77,8 +77,21 @@ class FakeCursor:
                     updated[indexes[field]] = value
                 self.database["requests"][request_id] = tuple(updated)
                 self.rowcount = 1
+        elif "FROM dbo.Requests AS r" in query and "response.response_status" in query:
+            user_id, request_id = params
+            row = self.database["requests"].get(request_id)
+            if row and row[1] == user_id:
+                self.result = (
+                    row[0], row[3], row[2], "Tools", "Kanpur", "Kakadeo",
+                    row[5], row[6], row[7], row[8], "Aditya", None, 1,
+                )
         elif "FROM dbo.Requests" in query:
-            if "WHERE status IN" in query:
+            if "WHERE requester_id = ?" in query:
+                user_id = params[0]
+                self.results = [row for row in self.database["requests"].values()
+                                if row[1] == user_id]
+                self.results.sort(key=lambda row: row[0], reverse=True)
+            elif "WHERE status IN" in query:
                 user_id = params[0]
                 self.results = [row for row in self.database["requests"].values()
                                 if row[8] in {"OPEN", "MATCHED"} or row[1] == user_id]
@@ -336,6 +349,38 @@ def test_list_and_detail_requests_are_authenticated_and_readable(monkeypatch):
     assert listed.status_code == detail.status_code == 200
     assert listed.json["requests"][0]["request_id"] == request_id
     assert detail.json["request"]["item_description"] == valid_payload()["item_description"]
+    assert detail.json["request"]["is_requester"] is True
+
+
+def test_my_requests_api_only_returns_the_authenticated_users_requests(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+    requester_a = signed_in_client(user_id=11)
+    requester_b = signed_in_client(user_id=22)
+    own_a = requester_a.post("/api/requests", json=valid_payload()).json["request"]["request_id"]
+    own_b_payload = valid_payload()
+    own_b_payload["item_description"] = "Need a camera"
+    own_b = requester_b.post("/api/requests", json=own_b_payload).json["request"]["request_id"]
+
+    requests_a = requester_a.get("/api/requests").json["requests"]
+    requests_b = requester_b.get("/api/requests").json["requests"]
+    tampered_b = requester_b.get("/api/requests?requester_id=11").json["requests"]
+
+    assert [row["request_id"] for row in requests_a] == [own_a]
+    assert [row["request_id"] for row in requests_b] == [own_b]
+    assert [row["request_id"] for row in tampered_b] == [own_b]
+
+
+def test_direct_request_detail_is_not_visible_to_an_unrelated_user(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+    request_id = signed_in_client(user_id=11).post(
+        "/api/requests", json=valid_payload(),
+    ).json["request"]["request_id"]
+
+    response = signed_in_client(user_id=22).get(f"/api/requests/{request_id}")
+
+    assert response.status_code == 404
 
 
 def test_update_and_cancel_request_by_owner(monkeypatch):

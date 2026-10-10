@@ -108,6 +108,12 @@ def test_owner_request_feed_navigation_privacy_and_notification_link():
     assert "response_status:'INTERESTED'" in source
     assert "response_status:'IGNORED'" in source
     assert "`item-new?respond_to=${id}`" in source
+    assert "['REQUEST_NEARBY','MATCHING_REQUEST'].includes(n.notification_type)" in source
+    assert "My open requests" in source
+    assert "state.requests.filter(x=>['OPEN','MATCHED'].includes(x.status)).length" in source
+    assert "label:'Rent'" in source and "label:'Lend'" in source
+    assert "form.elements.rental_price.value=responseRequest.max_budget" in source
+    assert "form.elements.security_deposit.value='0'" in source
 
 
 def test_borrower_and_lender_views_have_distinct_offer_actions():

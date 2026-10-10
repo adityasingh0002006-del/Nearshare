@@ -27,11 +27,13 @@ class FakeCursor:
                     request_row["status"], request_row["start"], request_row["end"],
                 )
         elif "SELECT i.owner_id, i.category_id, i.is_available" in query:
-            item = self.database["items"].get(params[0])
+            item = self.database["items"].get(params[1])
             if item:
                 self.result = (
                     item["owner_id"], item["category_id"], item["is_available"],
                     item["rental_price"], item["locality_id"], item["is_active"],
+                    item.get("item_name", "Cordless Drill"), item.get("owner_name", "Surya"),
+                    item.get("city", "Kanpur"), self.database["requests"][1].get("city", "Kanpur"),
                 )
         elif "SELECT response_status FROM dbo.RequestResponses" in query:
             status = self.database["responses"].get((params[0], params[1]))
@@ -152,6 +154,7 @@ def make_database():
                 "requester_id": 100, "category_id": 5, "locality_id": 9,
                 "max_budget": Decimal("50.00"), "status": "OPEN",
                 "start": datetime(2026, 11, 1), "end": datetime(2026, 11, 3),
+                "city": "Kanpur",
             },
         },
         "items": {
@@ -159,8 +162,8 @@ def make_database():
                 "owner_id": 200, "category_id": 5, "locality_id": 9,
                 "is_active": True, "is_available": True,
                 "rental_price": Decimal("40.00"),
-            "owner_name": "Surya", "item_name": "Cordless Drill",
-            "image_url": "/api/items/images/8",
+                "owner_name": "Surya", "item_name": "Cordless Drill",
+                "image_url": "/api/items/images/8", "city": "Kanpur",
             },
         },
         "offers": [],
@@ -345,6 +348,20 @@ def test_owner_cannot_offer_an_item_that_does_not_match_request(monkeypatch):
 
     assert response.status_code == 409
     assert "match" in response.json["error"] or "category" in response.json["error"]
+    assert not database["offers"]
+
+
+def test_owner_cannot_offer_from_a_different_city_even_with_same_locality_id(monkeypatch):
+    database = make_database()
+    database["items"][20]["city"] = "Lucknow"
+    install_database(monkeypatch, database)
+
+    response = signed_in_client(user_id=200).post(
+        "/api/requests/1/offers", json=offer_payload(),
+    )
+
+    assert response.status_code == 409
+    assert "locality" in response.json["error"]
     assert not database["offers"]
 
 

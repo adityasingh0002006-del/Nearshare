@@ -15,7 +15,7 @@
 - Public NearShare landing page and responsive navigation.
 - Registration, login, logout and current-session lookup.
 - Browse/search items, view details, create/edit/delete owned items and upload JPEG, PNG or WebP images.
-- Create requests, see open requests, view hyperlocal matches and make offers on matching items.
+- Create requests, discover locality-wide requests, view hyperlocal item matches and make offers on matching items.
 - View offers, accept/reject request offers, withdraw own pending offers and create bookings through acceptance.
 - View bookings, confirm handover, return and completion, and submit/list participant reviews.
 - Notification inbox, unread count and mark-as-read action.
@@ -49,6 +49,8 @@ The lookup API reads categories and cities from the database and returns localit
 
 4. Create database objects in Azure SQL, in this order, if setting up a new database: `sql/schema.sql`, `sql/views.sql`, `sql/procedures.sql`, and (for development data) `sql/seed.sql`. `sql/triggers.sql` is documentation and creates no trigger.
 
+   For an existing database, apply each unapplied script in `sql/migrations/` before deploying code that uses it. In particular, apply `20261011_request_responses.sql` to add the per-user request response state used by Requests Near You. The app does not apply migrations at startup.
+
 5. Start the Flask app:
 
    ```powershell
@@ -68,7 +70,7 @@ Routes are defined in the Flask blueprints; all endpoints are under `/api` unles
 | Admin | `GET /api/admin/me`, `GET /api/admin/users`, `PATCH /api/admin/users/<user_id>/status`, `GET /api/admin/summary` |
 | Items | `GET, POST /api/items`, `GET, PUT, PATCH, DELETE /api/items/<item_id>`, `POST /api/items/<item_id>/images` |
 | Lookups | `GET /api/categories`, `GET /api/cities`, `GET /api/localities?city=<city>` |
-| Requests | `GET, POST /api/requests`, `GET /api/requests/<request_id>`, `PATCH /api/requests/<request_id>`, `GET /api/requests/<request_id>/matches`, `POST /api/requests/<request_id>/cancel` |
+| Requests | `GET, POST /api/requests` (GET returns only the current user's requests), `GET /api/requests/nearby`, `GET, POST /api/requests/<request_id>/response`, `GET /api/requests/<request_id>`, `PATCH /api/requests/<request_id>`, `GET /api/requests/<request_id>/matches`, `POST /api/requests/<request_id>/cancel` |
 | Offers | `POST /api/requests/<request_id>/offers`, `GET /api/offers`, `GET /api/requests/<request_id>/offers`, `GET /api/offers/<offer_id>`, `POST /api/offers/<offer_id>/withdraw`, `POST /api/offers/<offer_id>/accept`, `POST /api/offers/<offer_id>/reject` |
 | Bookings | `GET /api/bookings`, `GET /api/bookings/<booking_id>`, `POST /api/bookings/<booking_id>/handover`, `/return`, `/complete` |
 | Reviews | `POST, GET /api/reviews/bookings/<booking_id>/reviews`, `GET /api/reviews/<review_id>` |

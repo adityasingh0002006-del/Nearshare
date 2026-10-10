@@ -36,7 +36,7 @@ class NotificationCursor:
                         and n[4] == notification_type
                         and (message is None or n[3] == message)), None)
             self.result = (row[0],) if row else None
-        elif "SELECT DISTINCT recipient.user_id, r.item_description" in query:
+        elif "SELECT DISTINCT recipient.user_id, requester.full_name, r.item_description" in query:
             request_id = params[0]
             requests = self.database.get("requests")
             if requests is None:
@@ -53,7 +53,7 @@ class NotificationCursor:
                         or request["status"] not in {"OPEN", "MATCHED"}):
                     continue
                 self.results.append((
-                    recipient["user_id"], request["title"], request["category"],
+                    recipient["user_id"], request.get("requester_name", "Aditya"), request["title"], request["category"],
                     request["locality"], request["city"], request["start"],
                     request["end"], request["budget"],
                 ))
@@ -132,7 +132,8 @@ class OfferCreationCursor(NotificationCursor):
                            datetime(2026, 11, 1), datetime(2026, 11, 3))
             return self
         if "SELECT i.owner_id, i.category_id, i.is_available" in query:
-            self.result = (200, 5, True, Decimal("40.00"), 9, True)
+            self.result = (200, 5, True, Decimal("40.00"), 9, True,
+                           "Cordless Drill", "Surya", "Kanpur", "Kanpur")
             return self
         if "WHERE booked_offer.item_id = ?" in query or "SELECT 1 FROM dbo.Offers WITH" in query:
             self.result = None
@@ -210,14 +211,15 @@ def test_new_request_notifies_all_active_same_locality_users_without_items_once(
 
     assert {row[1] for row in database["notifications"]} == {20, 21, 25}
     assert len(database["notifications"]) == 3
-    assert all(row[4] == "MATCHING_REQUEST" for row in database["notifications"])
+    assert all(row[4] == "REQUEST_NEARBY" for row in database["notifications"])
     message = database["notifications"][0][3]
     assert all(value in message for value in (
-        "Cordless Drill", "Tools", "Kakadeo", "Kanpur", "2026-10-10", "2026-10-11", "50",
+        "Aditya", "Cordless Drill", "Tools", "Kakadeo", "Kanpur", "2026-10-10", "2026-10-11", "50",
     ))
+    assert len(message) <= 1000
     assert all(value not in message for value in ("requester", "email", "phone", "address", "Account A"))
     query = cursor.executed[0][0]
-    assert "SELECT DISTINCT recipient.user_id, r.item_description" in query
+    assert "SELECT DISTINCT recipient.user_id, requester.full_name, r.item_description" in query
     assert "recipient.is_active = 1" in query
     assert "recipient.user_id <> r.requester_id" in query
     assert "recipient_locality.city = request_locality.city" in query
@@ -258,7 +260,7 @@ def test_multiple_locality_requests_are_visible_in_notifications_api_and_unread_
 
     assert inbox.status_code == unread.status_code == 200
     assert {row["request_id"] for row in inbox.json["notifications"]} == {5, 6}
-    assert all(row["notification_type"] == "MATCHING_REQUEST" for row in inbox.json["notifications"])
+    assert all(row["notification_type"] == "REQUEST_NEARBY" for row in inbox.json["notifications"])
     assert unread.json == {"unread_count": 2}
     assert all("Cordless Drill" not in row["message"] or row["request_id"] == 5
                for row in inbox.json["notifications"])
@@ -281,7 +283,7 @@ def test_offer_creation_notifies_request_owner_in_same_transaction(monkeypatch):
 
     assert response.status_code == 201, response.json
     assert database["notifications"][0][1:5] == (
-        100, 1, "A new offer (1) was submitted on your request.", "OFFER_RECEIVED",
+        100, 1, "Surya offered to rent Cordless Drill for your request.", "OFFER_RECEIVED",
     )
     assert connections[-1].commits == 1
 

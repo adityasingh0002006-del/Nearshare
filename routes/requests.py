@@ -278,7 +278,7 @@ def request_response_details(request_id):
         cursor = conn.cursor()
         details = get_request_response(cursor, request_id, session["user_id"])
         has_item = False
-        if details["response_status"] != "IGNORED":
+        if not details["is_requester"] and details["response_status"] != "IGNORED":
             has_item = request_id in find_owner_matching_request_ids(cursor, session["user_id"])
         details["has_matching_item"] = has_item
         return jsonify(request=details), 200
@@ -322,14 +322,14 @@ def respond_to_request(request_id):
 @requests_bp.get("")
 @login_required
 def list_requests():
-    """Show open marketplace requests plus the signed-in user's own history."""
+    """Return only requests created by the authenticated user (including history)."""
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute(
             f"""SELECT {_REQUEST_COLUMNS} FROM dbo.Requests
-                WHERE status IN (N'OPEN', N'MATCHED') OR requester_id = ?
+                WHERE requester_id = ?
                 ORDER BY created_at DESC, request_id DESC""",
             session["user_id"],
         )
@@ -348,13 +348,22 @@ def get_request(request_id):
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute(f"SELECT {_REQUEST_COLUMNS} FROM dbo.Requests WHERE request_id = ?", request_id)
-        row = cursor.fetchone()
-        if not row:
-            return jsonify(error="Request not found"), 404
-        if row[1] != session["user_id"] and row[8] not in {"OPEN", "MATCHED"}:
-            return jsonify(error="Request not found"), 404
-        return jsonify(request=_serialize(row)), 200
+        details = get_request_response(cursor, request_id, session["user_id"])
+        return jsonify(request={
+            "request_id": details["request_id"],
+            "item_description": details["title"],
+            "category_id": details["category_id"],
+            "category_name": details["category_name"],
+            "city": details["city"], "locality": details["locality"],
+            "start_datetime": details["start_datetime"],
+            "end_datetime": details["end_datetime"],
+            "max_budget": details["max_budget"],
+            "status": details["status"],
+            "requester_name": details["requester_name"],
+            "is_requester": details["is_requester"],
+        }), 200
+    except RequestResponseError as exc:
+        return jsonify(error=str(exc)), exc.status_code
     except Exception:
         return _db_error()
     finally:

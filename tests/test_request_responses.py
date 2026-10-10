@@ -22,13 +22,14 @@ class ResponseCursor:
         self.results = []
         if "FROM dbo.Requests AS r" in query and "response.response_status" in query:
             user_id, request_id = params
-            eligible = (request_id == 41 and user_id != self.requester_id and self.active
-                        and self.locality_id == 9 and self.city == "Kanpur")
+            is_requester = user_id == self.requester_id
+            eligible = (request_id == 41 and (is_requester or (self.active
+                        and self.locality_id == 9 and self.city == "Kanpur")))
             if eligible:
                 self.result = (
                     41, "Cordless Drill", 3, "Tools", "Kanpur", "Kakadeo",
                     datetime(2026, 10, 10, 17, 35), datetime(2026, 10, 11, 16, 35),
-                    Decimal("50.00"), "OPEN", "Aditya", self.response,
+                    Decimal("50.00"), "OPEN", "Aditya", self.response, int(is_requester),
                 )
         elif "SELECT response_status FROM dbo.RequestResponses" in query:
             self.result = (self.response,) if self.response else None
@@ -96,6 +97,7 @@ def test_locality_user_gets_private_safe_request_details(monkeypatch):
     request_data = response.json["request"]
     assert request_data["requester_name"] == "Aditya"
     assert request_data["title"] == "Cordless Drill"
+    assert request_data["is_requester"] is False
     for private_field in ("email", "phone", "address", "requester_email", "requester_phone"):
         assert private_field not in request_data
     query = cursor.queries[0][0]
@@ -106,10 +108,24 @@ def test_locality_user_gets_private_safe_request_details(monkeypatch):
     assert "phone" not in query.lower()
     assert "address" not in query.lower()
 
+    direct = signed_in_client().get("/api/requests/41")
+    assert direct.status_code == 200
+    assert "requester_name" in direct.json["request"]
+    assert "requester_id" not in direct.json["request"]
 
-def test_requester_wrong_locality_and_inactive_viewers_cannot_open_response(monkeypatch):
+
+def test_requester_can_read_own_request_but_outsiders_cannot(monkeypatch):
+    requester_cursor = ResponseCursor()
+    install(monkeypatch, requester_cursor)
+    own = signed_in_client(11).get("/api/requests/41/response")
+    assert own.status_code == 200
+    assert own.json["request"]["is_requester"] is True
+    own_response = signed_in_client(11).post(
+        "/api/requests/41/response", json={"response_status": "INTERESTED"},
+    )
+    assert own_response.status_code == 403
+
     for cursor, user_id in (
-        (ResponseCursor(), 11),
         (ResponseCursor(locality_id=10), 22),
         (ResponseCursor(city="Lucknow"), 22),
         (ResponseCursor(active=False), 22),
@@ -117,6 +133,8 @@ def test_requester_wrong_locality_and_inactive_viewers_cannot_open_response(monk
         install(monkeypatch, cursor)
         response = signed_in_client(user_id).get("/api/requests/41/response")
         assert response.status_code == 404
+        direct = signed_in_client(user_id).get("/api/requests/41")
+        assert direct.status_code == 404
 
 
 def test_request_response_ignore_is_persisted_idempotently_and_marks_broadcast_read(monkeypatch):

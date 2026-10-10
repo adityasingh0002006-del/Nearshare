@@ -47,13 +47,14 @@ def create_notification(
 
 def notify_locality_users_of_request(cursor, request_id):
     """Create one private, idempotent notification per active locality user."""
-    notification_type = "MATCHING_REQUEST"
+    notification_type = "REQUEST_NEARBY"
     cursor.execute(
-        """SELECT DISTINCT recipient.user_id, r.item_description,
+        """SELECT DISTINCT recipient.user_id, requester.full_name, r.item_description,
                   c.category_name, request_locality.locality_name,
                   request_locality.city, r.start_datetime, r.end_datetime,
                   r.max_budget
            FROM dbo.Requests AS r
+           INNER JOIN dbo.Users AS requester ON requester.user_id = r.requester_id
            INNER JOIN dbo.Categories AS c ON c.category_id = r.category_id
            INNER JOIN dbo.Localities AS request_locality
                ON request_locality.locality_id = r.locality_id
@@ -69,10 +70,16 @@ def notify_locality_users_of_request(cursor, request_id):
     )
     rows = cursor.fetchall()
     for row in rows:
+        requester_name = str(row[1] or "Someone nearby").strip()[:120] or "Someone nearby"
+        requested_item = str(row[2] or "an item").strip()[:400] or "an item"
+        for leading_phrase in ("i need ", "need ", "looking for "):
+            if requested_item.lower().startswith(leading_phrase):
+                requested_item = requested_item[len(leading_phrase):]
+                break
         message = (
-            f"Someone nearby is looking for {row[1]} · {row[2]} · "
-            f"{row[3]}, {row[4]} · {row[5]:%Y-%m-%d %H:%M} – "
-            f"{row[6]:%Y-%m-%d %H:%M} · Budget up to ₹{row[7]}/day."
+            f"{requester_name} wants {requested_item} · {row[3]} · "
+            f"{row[4]}, {row[5]} · {row[6]:%Y-%m-%d %H:%M} – "
+            f"{row[7]:%Y-%m-%d %H:%M} · Budget up to ₹{row[8]}/day."
         )
         create_notification(
             cursor, row[0], request_id, message, notification_type,
