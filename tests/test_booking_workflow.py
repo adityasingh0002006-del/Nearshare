@@ -522,7 +522,7 @@ def test_item_owner_can_confirm_handover(monkeypatch):
     assert response.json["booking"]["status"] == "HANDED_OVER"
     assert database["bookings"][0][7] == "HANDED_OVER"
     assert database["notifications"] == [(
-        100, 1, "Booking 1 status changed to HANDED_OVER.", "BOOKING_HANDED_OVER",
+        100, 1, "Your booking has been marked as handed over by the item owner.", "BOOKING_HANDED_OVER",
     )]
     assert database["audits"][0][0:3] == (200, "BOOKING_HANDED_OVER", "1")
 
@@ -560,7 +560,7 @@ def test_borrower_can_return_handed_over_booking(monkeypatch):
     assert response.status_code == 200
     assert response.json["booking"]["status"] == "RETURNED"
     assert database["notifications"] == [(
-        200, 1, "Booking 1 status changed to RETURNED.", "BOOKING_RETURNED",
+        200, 1, "The borrower has marked the item as returned.", "BOOKING_RETURNED",
     )]
 
 

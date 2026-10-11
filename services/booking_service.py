@@ -263,9 +263,12 @@ def reject_offer(cursor, offer_id, actor_id, ip_address=None):
 
 
 _BOOKING_TRANSITIONS = {
-    "handover": ("BOOKED", "HANDED_OVER", "owner", "BOOKING_HANDED_OVER"),
-    "return": ("HANDED_OVER", "RETURNED", "borrower", "BOOKING_RETURNED"),
-    "complete": ("RETURNED", "COMPLETED", "owner", "BOOKING_COMPLETED"),
+    "handover": ("BOOKED", "HANDED_OVER", "owner", "BOOKING_HANDED_OVER",
+                 "Your booking has been marked as handed over by the item owner."),
+    "return": ("HANDED_OVER", "RETURNED", "borrower", "BOOKING_RETURNED",
+               "The borrower has marked the item as returned."),
+    "complete": ("RETURNED", "COMPLETED", "owner", "BOOKING_COMPLETED",
+                 "Your booking has been completed. The item owner confirmed the return."),
 }
 
 
@@ -279,7 +282,7 @@ def transition_booking(cursor, booking_id, actor_id, transition, ip_address=None
     rule = _BOOKING_TRANSITIONS.get(transition)
     if not rule:
         raise ValueError("Unsupported booking transition")
-    expected_status, target_status, permitted_party, action = rule
+    expected_status, target_status, permitted_party, action, message = rule
 
     cursor.execute(
         """SELECT b.booking_id, b.offer_id, b.borrower_id, o.owner_id,
@@ -334,7 +337,7 @@ def transition_booking(cursor, booking_id, actor_id, transition, ip_address=None
     request_id = row[4]
     _notify(
         cursor, recipient_id, request_id,
-        f"Booking {booking_id} status changed to {target_status}.", action,
+        message, action,
     )
     cursor.execute(
         """INSERT INTO dbo.AuditLogs (user_id, action, entity_type, entity_id, ip_address)
