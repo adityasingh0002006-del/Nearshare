@@ -413,8 +413,8 @@ def get_booking_contacts(cursor, booking_id, actor_id):
     }
 
 
-def serialize_booking(row):
-    return {
+def serialize_booking(row, include_participant_ids=False):
+    booking = {
         "booking_id": row[0],
         "offer_id": row[1],
         "request_id": row[4],
@@ -427,3 +427,7 @@ def serialize_booking(row):
         "status": row[11],
         "created_at": row[12].isoformat() if row[12] else None,
     }
+    if include_participant_ids:
+        booking["borrower_id"] = row[2]
+        booking["owner_id"] = row[3]
+    return booking

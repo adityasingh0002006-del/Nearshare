@@ -499,7 +499,10 @@ def test_booking_retrieval_is_limited_to_borrower_and_item_owner(monkeypatch):
     owner = signed_in_client(user_id=200)
     outsider = signed_in_client(user_id=300)
 
-    assert borrower.get("/api/bookings").json["bookings"][0]["booking_id"] == 1
+    borrower_booking = borrower.get("/api/bookings").json["bookings"][0]
+    assert borrower_booking["booking_id"] == 1
+    assert borrower_booking["borrower_id"] == 100
+    assert borrower_booking["owner_id"] == 200
     assert owner.get("/api/bookings/1").status_code == 200
     assert outsider.get("/api/bookings/1").status_code == 403
     assert outsider.get("/api/bookings").json["bookings"] == []

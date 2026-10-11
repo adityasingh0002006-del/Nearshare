@@ -29,7 +29,9 @@ def list_my_bookings():
     try:
         conn = get_connection()
         rows = list_bookings(conn.cursor(), session["user_id"])
-        return jsonify(bookings=[serialize_booking(row) for row in rows]), 200
+        return jsonify(bookings=[
+            serialize_booking(row, include_participant_ids=True) for row in rows
+        ]), 200
     except Exception:
         return _db_error()
     finally:
@@ -50,7 +52,7 @@ def get_booking_detail(booking_id):
             return jsonify(error="Booking not found"), 404
         if session["user_id"] not in {row[2], row[3]}:
             return jsonify(error="You are not a participant in this booking"), 403
-        return jsonify(booking=serialize_booking(row)), 200
+        return jsonify(booking=serialize_booking(row, include_participant_ids=True)), 200
     except Exception:
         return _db_error()
     finally:
@@ -90,7 +92,7 @@ def _transition(booking_id, transition_name):
             transition_name, request.remote_addr,
         )
         conn.commit()
-        return jsonify(booking=serialize_booking(booking)), 200
+        return jsonify(booking=serialize_booking(booking, include_participant_ids=True)), 200
     except BookingWorkflowError as exc:
         if conn:
             conn.rollback()
