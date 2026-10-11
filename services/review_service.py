@@ -103,6 +103,15 @@ def list_booking_reviews(cursor, booking_id, actor_id):
     return [_serialize(row) for row in cursor.fetchall()]
 
 
+def has_reviewed_booking(cursor, booking_id, actor_id):
+    cursor.execute(
+        """SELECT review_id FROM dbo.Reviews
+           WHERE booking_id = ? AND reviewer_id = ?""",
+        booking_id, actor_id,
+    )
+    return cursor.fetchone() is not None
+
+
 def get_review(cursor, review_id, actor_id):
     cursor.execute(
         """SELECT rv.review_id, rv.booking_id, rv.rating, rv.comment, rv.created_at,

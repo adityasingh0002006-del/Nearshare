@@ -219,7 +219,24 @@ def test_booking_participants_can_list_reviews_and_outsiders_are_denied(monkeypa
 
     assert borrower.status_code == owner.status_code == 200
     assert borrower.json["reviews"][0]["rating"] == 5
+    assert borrower.json["has_reviewed"] is True
+    assert owner.json["has_reviewed"] is False
     assert outsider.status_code == 403
+
+
+def test_successful_review_is_reported_as_already_submitted(monkeypatch):
+    database = make_database()
+    install_database(monkeypatch, database)
+    client = signed_in_client(user_id=100)
+
+    submitted = client.post(
+        "/api/reviews/bookings/1/reviews", json={"rating": 5, "comment": "Great"},
+    )
+    listed = client.get("/api/reviews/bookings/1/reviews")
+
+    assert submitted.status_code == 201
+    assert listed.status_code == 200
+    assert listed.json["has_reviewed"] is True
 
 
 def test_review_detail_is_visible_only_to_booking_participants(monkeypatch):

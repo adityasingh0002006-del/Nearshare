@@ -150,3 +150,13 @@ def test_contact_details_are_loaded_from_participant_scoped_booking_endpoint():
     assert "Unable to load contact details. Please try again." in source
     assert "role','alert'" in source
     assert "filename='js/app.js', v='2'" in template
+
+
+def test_completed_booking_review_button_opens_and_submits_existing_review_form():
+    source = APP_JS.read_text(encoding="utf-8")
+
+    assert "document.querySelectorAll('[data-review]').forEach(btn=>btn.onclick=()=>reviewForm(btn.dataset.review))" in source
+    assert "function reviewForm(id)" in source
+    assert "API.post(`/api/reviews/bookings/${id}/reviews`" in source
+    assert "await showReviews(id)" in source
+    assert "b.status==='COMPLETED'&&!b.has_reviewed" in source

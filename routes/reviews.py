@@ -6,7 +6,10 @@ from flask import Blueprint, current_app, jsonify, request, session
 
 from database.connection import get_connection
 from middleware.auth import login_required
-from services.review_service import ReviewError, create_review, get_review, list_booking_reviews
+from services.review_service import (
+    ReviewError, create_review, get_review, has_reviewed_booking,
+    list_booking_reviews,
+)
 
 
 reviews_bp = Blueprint("reviews", __name__)
@@ -87,8 +90,11 @@ def list_reviews(booking_id):
     conn = None
     try:
         conn = get_connection()
-        rows = list_booking_reviews(conn.cursor(), booking_id, session["user_id"])
-        return jsonify(reviews=rows), 200
+        cursor = conn.cursor()
+        actor_id = session["user_id"]
+        rows = list_booking_reviews(cursor, booking_id, actor_id)
+        has_reviewed = has_reviewed_booking(cursor, booking_id, actor_id)
+        return jsonify(reviews=rows, has_reviewed=has_reviewed), 200
     except ReviewError as exc:
         return jsonify(error=str(exc)), exc.status_code
     except Exception:
